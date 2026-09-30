@@ -14,7 +14,7 @@ truth, not hedging.
 
 | Service | Owns | Language | Status |
 | --- | --- | --- | --- |
-| [identity](/services/identity/) | Auth, sessions, accounts, tenancy, OIDC | Go | v0 — accounts, roles, invitations, and the OIDC provider. **MFA is in flight, not shipped.** |
+| [identity](/services/identity/) | Auth, sessions, accounts, tenancy, OIDC, MFA | Go | v0 — accounts, roles, invitations, the OIDC provider, and TOTP with recovery codes. **No password reset, no email verification, no refresh tokens.** |
 | [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, the subscription lifecycle, webhooks in and out |
 | [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 — email pipeline, preferences, Oban outbox worker, signed outbound webhooks. Publishes one event |
 | [darkroom](/services/darkroom/) | Media uploads, variants, object storage | Rust | v0 — signed uploads, tenant isolation, variants, S3 **and Cloudflare R2** |
@@ -23,8 +23,13 @@ truth, not hedging.
 | [parlor](/services/parlor/) | App shell template + admin | Next.js | In progress — accounts, invitations, billing screens. **No admin surface, no e2e suite** |
 
 Three of those status lines carry a gap that will bite a reader who skips them:
-`identity` has no MFA, `muse`'s auth does not verify the token it is given, and
-`guard` forwards nothing. Each is stated on its own page with the consequence.
+`identity` cannot reset a password or renew an access token, `muse`'s auth does
+not verify the token it is given, and `guard` forwards nothing. Each is stated
+on its own page with the consequence.
+
+For the path that takes you from nothing to a running deployment, read
+[Hosted pilot onboarding](/pilot/) — it is the same walk-through aimed at
+somebody who has already decided.
 
 For the ports, probes, environment variables, and dependency graph behind this
 table, see [Topology](/architecture/topology/).
