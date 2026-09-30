@@ -41,6 +41,15 @@ export default defineConfig({
       // Forbid search indexing (packet: "no search indexing"). See the header.
       pagefind: false,
       lastUpdated: false,
+      // The sidebar is a claim about the site: every `slug:` here is resolved by
+      // Starlight at build time (a dangling one fails the build) and re-checked
+      // against dist/ by tests/smoke.mjs. Add the page and the entry in the same
+      // commit, and never one without the other.
+      //
+      // Section order follows the two readers this site has: someone deciding
+      // whether to adopt cafaye (Start here → Architecture → Services), then
+      // someone who already did and now has to keep it running (Runbooks →
+      // Troubleshooting). `services` is the hub both paths point back at.
       sidebar: [
         { label: 'Home', link: '/' },
         {
@@ -48,9 +57,25 @@ export default defineConfig({
           items: [{ slug: 'getting-started' }, { slug: 'contracts' }],
         },
         {
+          label: 'Architecture',
+          items: [{ slug: 'architecture' }, { slug: 'architecture/topology' }],
+        },
+        {
           label: 'Services',
           items: [{ autogenerate: { directory: 'services' } }],
         },
+        {
+          label: 'Runbooks',
+          items: [
+            { slug: 'runbooks' },
+            { slug: 'runbooks/tenant-provisioning' },
+            { slug: 'runbooks/backup-and-restore' },
+            { slug: 'runbooks/secret-rotation' },
+            { slug: 'runbooks/service-down' },
+            { slug: 'runbooks/billing-webhooks' },
+          ],
+        },
+        { slug: 'troubleshooting' },
         { slug: 'guides' },
       ],
     }),

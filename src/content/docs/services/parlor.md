@@ -9,11 +9,17 @@ UI — plus the admin surface they all inherit. It is **Next.js**, because it is
 the web and nothing else needs to be.
 
 :::caution[Status: in progress (Phase 2)]
-The shell arrived first: routing, theme, health surfaces, and a test rig. The
-auth screens followed, against a generated client for the `identity` contract
-with a mocked transport underneath it. Settings, team/invitation management, the
-admin surface, and the Playwright end-to-end suite are later packets. This is
-not a finished template to clone today.
+Three routes exist today: a landing placeholder at `/`, `/register` against
+`POST /v1/users`, and `/login` against `POST /v1/session`, plus the shell
+(header, sign-out when authed), a typed transport-injected identity client,
+session state in React Query, a `localStorage` token store, health surfaces, and
+a vitest rig.
+
+Not built: settings, team and invitation management, the admin surface, product
+screens, and the Playwright end-to-end suite. This is not a finished template to
+clone today. Its `cafaye.yml` is also still the pre-`core`
+`apiVersion: cafaye/v0-draft` shape and does not validate — see
+[Topology](/architecture/topology/#manifest-drift-you-may-hit).
 :::
 
 `parlor` is a **template, not a platform dependency** — and that is the design

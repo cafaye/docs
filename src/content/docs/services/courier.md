@@ -13,10 +13,17 @@ what the BEAM is for.
 :::caution[Status: v0 scaffold]
 A working, deployable service with probes, a release image, and a local stack —
 and deliberately **no notification logic yet**. There is no Swoosh, no provider
-adapter, no job queue, no preference store. The five event types it will publish
-(`email.queued`, `email.delivered`, `email.bounced`, `email.complained`,
-`notification.suppressed`) are declared in its manifest as a checklist for the
-packet that will emit them, not as a description of anything happening now.
+adapter, no job queue, no preference store, and no migrations.
+
+**Nothing sends an email.** The practical consequence for an operator: the
+invitation token from
+[tenant provisioning](/runbooks/tenant-provisioning/) is returned in the API
+response and has to be delivered by hand. The five event types it will publish
+(`courier.email.queued`, `courier.email.delivered`, `courier.email.bounced`,
+`courier.email.complained`, `courier.notification.suppressed`) are declared in
+its manifest as a checklist, and its manifest is currently the one that fails
+`caf contract lint` over the two-segment versus three-segment spelling — see
+[manifest drift](/architecture/topology/#manifest-drift-you-may-hit).
 :::
 
 Delivery is **at-least-once**, which makes idempotency the consumer's problem

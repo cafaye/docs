@@ -10,23 +10,31 @@ cafaye exists so you never start a SaaS from scratch again: authentication,
 tenancy, billing, notifications, media, and AI routing — production-grade,
 self-hostable, and connected by typed contracts. It is an **organization, not a
 single repository**: every service below lives in its own repo, versioned and
-installable on its own, so you can scaffold a product with the `caf` CLI, run the
-whole platform with one command, or pick just the services you need.
+installable on its own. You can take the one you need rather than adopting the
+whole platform, run the whole stack on your own infrastructure, and keep it
+alive with the runbooks on this site.
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid stagger>
   <Card title="Start here" icon="rocket">
-    Install the CLI, scaffold a product, and see what exists today.
+    Install the CLI, run a service against local Postgres, and see what exists
+    today — with every unbuilt command marked as such.
     [Getting started](/getting-started/)
   </Card>
-  <Card title="The services" icon="setting">
-    One page per service: what it owns, and which language it is written in.
-    [Browse services](/services/)
+  <Card title="Architecture" icon="open-book">
+    What each service owns, how they talk, and why the boundaries are where
+    they are.
+    [Architecture](/architecture/)
   </Card>
-  <Card title="Contracts" icon="open-book">
-    How services find each other: `cafaye.yml`, OpenAPI, and the event envelope.
-    [Read contracts](/contracts/)
+  <Card title="Runbooks" icon="setting">
+    Provision a tenant, restore a database, rotate a secret, handle an outage,
+    chase a webhook.
+    [Runbooks](/runbooks/)
+  </Card>
+  <Card title="Troubleshooting" icon="warning">
+    Keyed by the symptom you can see, not the component you suspect.
+    [Troubleshooting](/troubleshooting/)
   </Card>
 </CardGrid>
 
@@ -63,8 +71,11 @@ talks to models — Python's ecosystem is unmatched. And `parlor` is the web.
 Polyglot by design, connected by typed contracts, never by shared code.
 
 :::caution[Early development]
-cafaye is **early**. Repos are coming online service by service, starting with
-`identity` and `billing`, and every service page on this site says plainly what
-is built and what is not. Where a command does not exist yet, this site says so
-rather than pretending. Watch [the org](https://github.com/cafaye) for releases.
+cafaye is **early**. Of the ten `caf` subcommands, four do real work today
+(`version`, `doctor`, `contract lint`, `contract resolve`); the other six parse
+their flags and return `not implemented in v0`. There is no hosted platform, no
+event broker, and `darkroom` is an empty repository. Every service page on this
+site says plainly what is built and what is not, and
+[Getting started](/getting-started/) runs the whole path end to end with the
+commands that actually exist today.
 :::

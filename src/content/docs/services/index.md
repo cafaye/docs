@@ -14,13 +14,16 @@ truth, not hedging.
 
 | Service | Owns | Language | Status |
 | --- | --- | --- | --- |
-| [identity](/services/identity/) | Auth, sessions, accounts, tenancy | Go | v0 skeleton |
-| [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers & plans |
-| [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 scaffold |
-| [darkroom](/services/darkroom/) | Media uploads, variants, S3 | Rust | Not started |
-| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v0 scaffold |
-| [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — auth only |
-| [parlor](/services/parlor/) | App shell template + admin | Next.js | Phase 2, in progress |
+| [identity](/services/identity/) | Auth, sessions, accounts, tenancy | Go | v0 — accounts, roles, invitations |
+| [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, webhooks in |
+| [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 scaffold — sends nothing |
+| [darkroom](/services/darkroom/) | Media uploads, variants, S3 | Rust | Not started (empty repo) |
+| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth is a stub |
+| [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — real auth, no routing |
+| [parlor](/services/parlor/) | App shell template + admin | Next.js | Phase 2 — register and login only |
+
+For the ports, probes, environment variables, and dependency graph behind this
+table, see [Topology](/architecture/topology/).
 
 ## Why one language per service?
 
