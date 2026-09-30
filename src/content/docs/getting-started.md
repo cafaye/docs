@@ -11,17 +11,20 @@ output is quoted where it matters.
 
 ## Status, first
 
-**cafaye is in early development.** Of the ten `caf` subcommands, four do real
-work today — `version`, `doctor`, `contract lint`, `contract resolve`. The other
-six parse their flags, check their argument count, and return
-`not implemented in v0`. That is stated on every step below rather than hidden,
-because a command that silently half-works is worse than one that refuses.
+**cafaye is in early development.** Of the ten `caf` subcommands, **five** do
+real work today — `version`, `doctor`, `dev`, `contract lint`, `contract
+resolve`. The other five (`init`, `new`, `deploy`, `gen`, `mcp`) parse their
+flags, check their argument count, and return `not implemented in v0`. That is
+stated on every step below rather than hidden, because a command that silently
+half-works is worse than one that refuses.
 
-What *is* real: the [contracts](/contracts/) are frozen and validated, the
-services have HTTP surfaces you can call, container images you can build, and a
-local stack you can run. What is not real: `caf dev`, `caf deploy`, `caf gen`,
-and the broker. The [runbooks](/runbooks/) assume you have already got the
-services running on your own infrastructure.
+What *is* real: the [contracts](/contracts/) are frozen and validated, seven of
+the eight `caf` subcommands you will reach for parse correctly, the services have
+HTTP surfaces you can call, container images you can build, a local stack you can
+run, and `caf dev` will render and bring up a compose file from a manifest. What
+is not real: `caf deploy`, `caf gen`, and the broker. The
+[runbooks](/runbooks/) assume you have already got the services running on your
+own infrastructure.
 
 ## Step 1 — check the toolchain
 
@@ -139,18 +142,22 @@ prose is a flag list that drifts.
 | Command | Takes | Works today |
 | --- | --- | --- |
 | `caf version` | — | yes |
-| `caf doctor` | — | yes |
+| `caf doctor` | 0 or 1 | yes |
 | `caf contract lint <path>` | 1 argument | yes |
 | `caf contract resolve <constraint> <version>` | 2 arguments | yes |
+| `caf dev [project]` | 0 or 1 | yes |
 | `caf init` | 0 arguments | flags only |
 | `caf new <name>` | 1 argument | flags only |
-| `caf dev <service>` | 1 argument | flags only |
 | `caf deploy <service>` | 1 argument | flags only |
 | `caf gen <target>` | 1 argument | flags only |
 | `caf mcp` | 0 arguments | flags only |
 
 *Flags only* means exactly what it says: the flags parse, the argument count is
 checked, and the command returns `not implemented in v0` with exit code 1.
+
+`doctor` and `dev` both take an **optional** path — `caf doctor` alone reports
+the machine, and `caf doctor ./my-service` reports the machine *and* whether it
+can run this particular project.
 
 ### Two things that will bite you
 
@@ -296,20 +303,34 @@ ranges, no `||`, no `x`-ranges. Note the pre-1.0 caret: on a `0.x` service
 
 ## Step 5 — run a service locally
 
-<span class="badge caution">Coming soon</span> — `caf dev` parses its flags,
-checks that it got exactly one argument, and returns `not implemented in v0`.
+`caf dev` **works.** It reads a project's `cafaye.yml`, validates it against the
+same rules `caf contract lint` applies, renders a compose file from it, **writes
+that file and prints it in full**, brings the stack up, waits for it, and reports
+what came up and what did not.
 
 ```sh
-caf dev identity       # caf: caf dev: not implemented in v0
-caf dev                # usage: caf dev wants 1 argument, got 0
+caf dev --dry-run ./hello      # render and print; do not bring anything up
 ```
 
-`caf dev` takes `-service`, `-port`, and `-no-tui`, and its usage line is
-`caf dev [flags] <service>`. It is not a substitute for what follows.
+```
+project hello-dev: hello (go)
+skipped legacy: optional dependency, and the local registry does not know how to run it
+wrote /work/hello/hello.compose.yaml
+```
 
-**Each service repository ships its own Compose stack, and that is the supported
-local path today.** `identity` is the shortest example, and the shape is the
-same for the others:
+The report **is** the message: `caf dev` prints its verdict for a stack that came
+up with something in it that did not, on stdout, once, and does not repeat it on
+stderr. A generated compose file is marked *do not edit* — every run rewrites it,
+and the manifest is the source of truth.
+
+**What it does not do yet:** it plans from the manifest and the local registry, so
+a dependency the registry does not know how to run is reported as `skipped`
+rather than silently omitted. It does not deploy, and it does not start a broker —
+nothing in the platform publishes events off the outbox.
+
+**Each service repository also ships its own Compose stack**, and that remains the
+supported path for a single service. `identity` is the shortest example, and the
+shape is the same for the others:
 
 ```sh
 git clone git@github.com:cafaye/identity.git
@@ -344,20 +365,25 @@ go run ./cmd/identity # http://localhost:8080
 | `identity` | `docker compose up -d` | 8080 | `{"status":"ok","deps":"postgres"}` |
 | `billing` | `docker compose up -d` (database only), then `bin/rails server` | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
 | `courier` | `docker compose up --build` | 4000 | `{"status":"ok"}` |
+| `darkroom` | `docker compose up -d` | 8080 | `{"status":"ok"}` |
 | `muse` | `docker compose up --build` | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
-| `guard` | `docker compose up -d --build` | 8080 | `{"status":"ok","deps":{…}}` |
+| `guard` | `docker compose up -d --build` | 8080 | `{"deps":{…}}` |
 | `parlor` | `bun run dev` | 3000 | `{"status":"ok","deps":"none"}` |
-| `darkroom` | *nothing yet* | — | the repository is empty |
 
 `billing` is the odd one: its Compose file starts **only Postgres**, and the
 application runs on the host. The commands are in that repository's README and
 are not repeated here, because they will be right there when you need them.
 
-Two port collisions to expect on a laptop: `identity` and `guard` both want
-8080, and `identity` and `billing` both want 5432 for Postgres. Compose takes
-the host port from a variable where the repository offers one
+**Three port collisions to expect on a laptop:** `identity`, `guard` and
+`darkroom` all want 8080, and `identity`, `billing`, `courier` and `darkroom` all
+want 5432 for Postgres (`muse` uses 5433). Compose takes the host port from a
+variable where the repository offers one
 (`POSTGRES_PORT=5433 docker compose up -d`); where it does not, run one service
 at a time.
+
+`darkroom`'s compose stack defaults to `DARKROOM_OBJECT_STORE=memory`, which is
+what makes the local path work with no bucket and no credentials. Its
+deployment build is the `s3` feature.
 
 ### Migrations are a step you run, not something that runs itself
 
@@ -428,10 +454,10 @@ logs.
 | `identity` | `docker build -t identity .` | 8080 | `gcr.io/distroless/static-debian12:nonroot` |
 | `billing` | `docker build -t billing .` | 80 | `ruby:4.0.1-slim`, entrypoint `/rails/bin/docker-entrypoint` |
 | `courier` | `docker build --build-arg SERVICE_NAME=courier -t courier .` | 4000 | `debian:trixie-20260918-slim` |
+| `darkroom` | `docker build -f docker/Dockerfile --build-arg --features s3 -t darkroom .` | 8080 | a Rust static binary; **the Dockerfile is under `docker/`, not the root** |
 | `muse` | `docker build -t muse .` | 8000 | `python:3.14-slim` |
 | `guard` | `docker build -t guard .` | 8080 | `oven/bun:1.3.12-slim` |
 | `parlor` | `docker build -t parlor .` | 3000 | `node:22-slim` |
-| `darkroom` | — | — | no Dockerfile; the repository is empty |
 
 The order that works, and the order that bites:
 
@@ -447,6 +473,7 @@ The order that works, and the order that bites:
 | `identity` | `GET /healthz` → always 200 | `GET /readyz` → 200, or 503 with each probe bounded at 2s |
 | `billing` | `GET /healthz` → always 200 | `GET /readyz` → 200, or `503 {"status":"error","checks":{"database":"error"}}` |
 | `courier` | `GET /healthz` → always 200, never touches the database | `GET /readyz` → 503 while the database is unreachable |
+| `darkroom` | `GET /healthz` → consults nothing | `GET /readyz` → really runs a query |
 | `muse` | `GET /healthz` → 200, consults nothing | `GET /readyz` → reports the `db` slot |
 | `guard` | `GET /healthz` → always 200 | `GET /readyz` → 200, or 503 if a registered probe is down |
 | `parlor` | `GET /healthz` → 200 | `GET /readyz` → `{"status":"ok","deps":"none"}` |
@@ -461,30 +488,46 @@ correctly.
 `guard`'s probes sit on the same port as its API, and it is **not** in the
 table above for `/v1/*` because `guard` routes nothing yet: `/v1/me` proves the
 auth chain and forwards nothing.
-
 ### What is not in this path yet
 
 The broker. `core` specifies a transactional outbox and NATS as the transport,
-and `identity` and `billing` both write `outbox_events` correctly — but **no
-service starts a publisher loop**, and `identity`'s only `Publisher`
+and `identity`, `billing`, `muse`, `courier` and `darkroom` all write
+`outbox_events` correctly, in the same transaction as the domain change — but
+**no service starts a publisher loop**, and `identity`'s only `Publisher`
 implementation is a deliberate no-op that would mark every event published and
 drain the outbox into nowhere. Events land in the table and stay there.
 
-That is not a bug to work around; it is the state of the platform, and it is
-the first thing to know if you are waiting for a downstream reaction that never
-comes. [Troubleshooting](/troubleshooting/) has the entry.
+That is not a bug to work around; it is the state of the platform, and it is the
+first thing to know if you are waiting for a downstream reaction that never
+comes. [Troubleshooting](/troubleshooting/) has the entry, and
+[Upgrading](/upgrading/) opens by saying how much of the event surface this
+actually affects — it matters if you wrote your own publisher loop, and not at
+all if you did not.
+
+**Observability is specified, not deployed.** `core` ships seven telemetry
+schemas and enforces the contract; no collector and no stack are running, and
+`muse` is the only service exporting any signal.
+[Observability](/observability/) says which, and what that means for the error
+dashboard you were about to build.
 
 ## What to read next
 
+- [Upgrading](/upgrading/) — if you already run a deployment and are moving to
+  the current contracts.
 - [Architecture](/architecture/) — what each service owns, and why the
   boundaries are where they are.
 - [Topology](/architecture/topology/) — the operator's table: ports, probes,
-  environment variables, and what talks to what.
+  environment variables, the HTTP surface of each service, and the cross-repo
+  drift audit.
 - [Contracts](/contracts/) — `cafaye.yml`, the event envelope, OpenAPI. The one
   thing worth understanding before anything else.
+- [Observability](/observability/) — the telemetry contract, and the gap between
+  it and a running stack.
 - [Services](/services/) — one page per service, each stating what is built and
   what is not.
 - [Runbooks](/runbooks/) — provisioning, backup and restore, secret rotation,
-  a service down, and billing webhooks. Read them before the first incident,
-  not during it.
+  a service down, and billing webhooks. Read them before the first incident, not
+  during it.
+- [Running the gates](/running-the-gates/) — the real gate for every repository,
+  including the tiers that do not run by default.
 - [Troubleshooting](/troubleshooting/) — keyed by symptom.

@@ -18,15 +18,26 @@ This page is the reference you keep open during an incident.
 | `identity` | Go | 8080 | 8080 | Postgres 17, own database | `^0.1.0` |
 | `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres 17, own database | `^0.2.0` |
 | `courier` | Elixir | 4000 | 4000 | Postgres 17, own database | `^0.1.0` |
+| `darkroom` | Rust | 8080 | 8080 | Postgres 17, own database | `^0.2.0` |
 | `muse` | Python | 8000 | 8000 | Postgres 18, own database | `^0.2.0` |
-| `guard` | TypeScript (Bun) | 8080 | 8080 | **none** | `^0.1.0` |
+| `guard` | TypeScript (Bun) | 8080 | 8080 | **none** — `Map`s and, with `REDIS_URL`, Redis | `^0.1.0` |
 | `parlor` | Next.js | 3000 | 3000 | **none** | *manifest is a pre-`core` draft* |
-| `darkroom` | Rust | — | — | — | *no manifest; the repository is empty* |
 
-`identity` and `guard` both want host port 8080. `identity`, `billing`, and
-`courier` all publish Postgres on host 5432 (`muse` uses 5433). On one machine,
-run them one at a time or remap the host side — the compose files take
-`POSTGRES_PORT` where the repository offers it.
+Three services want host port **8080** (`identity`, `guard`, `darkroom`).
+`identity`, `billing`, `courier` and `darkroom` all publish Postgres on host 5432
+(`muse` uses 5433). On one machine, run them one at a time or remap the host
+side — the compose files take `POSTGRES_PORT` where the repository offers it.
+
+**`core:` is not uniform, and that is recorded rather than fixed.** Four
+repositories still pin `^0.1.0`, which resolves to a `core` below the `0.2`
+spec several of them compile against. The pin is the manager's to cut, and every
+service has to move at the same time — `^0.2.0` means `>=0.2.0 <0.3.0`, so a
+service that moved and one that did not would be compiling against two different
+specs. `caf contract resolve` answers the question per manifest:
+`caf contract resolve '^0.1.0' 0.2.0` → `no`.
+
+`darkroom`'s image is built from **`docker/Dockerfile`**, not `./Dockerfile`, and
+with `--build-arg --features s3` for the deployment build.
 
 ## Probes
 
@@ -41,8 +52,9 @@ database blip becomes a crash loop.
 | `identity` | `GET /healthz` → always 200 | `GET /readyz`, each probe bounded at 2s | `{"status":"unavailable",…}` |
 | `billing` | `GET /healthz` → always 200 | `GET /readyz` | `{"status":"error","checks":{"database":"error"}}` |
 | `courier` | `GET /healthz` → never touches the database | `GET /readyz` | `{"status":"error","checks":{"database":"unavailable"}}` |
-| `muse` | `GET /healthz` → consults nothing | `GET /readyz` | reports the `db` slot |
-| `guard` | `GET /healthz` → always 200 | `GET /readyz` | 503 if a registered probe is down |
+| `darkroom` | `GET /healthz` → consults nothing | `GET /readyz` → really runs a query | the probe reason is logged, never returned |
+| `muse` | `GET /healthz` → consults nothing | `GET /readyz` → reports the `db` slot | — |
+| `guard` | `GET /healthz` → always 200 | `GET /readyz` | `{"deps":{"identity":"ok","redis":"unavailable"}}` |
 | `parlor` | `GET /healthz` → 200 | `GET /readyz` | `{"status":"ok","deps":"none"}` — `deps` is a placeholder |
 
 Two probe facts that are not obvious from the table:
@@ -87,6 +99,8 @@ wrong port.
 | `IDENTITY_JWKS_TTL_MS` | `300000` | How long a fetched key set is reused. **Also the revocation window.** |
 | `GUARD_CLIENT_ID` | `guard` | The `aud` guard accepts. |
 | `IDENTITY_URL` | `http://localhost:8080` | identity's base URL for the `/auth` **calls** — where a session is *requested*. |
+| `REDIS_URL` | *unset* | `redis://` or `rediss://` — host and port, no path. **Set it and the rate-limit counters are shared by every replica and survive a restart.** Unset and they are this process's memory. |
+| `REDIS_PREFIX` | `guard:rl` | Sub-namespace inside guard's own, so two guards or two environments sharing one Redis do not read each other's buckets. |
 
 `IDENTITY_URL` is a second variable for one service on purpose. The issuer is
 an https origin in every environment; the address `guard` *dials* is a service
@@ -95,7 +109,13 @@ container and you get a gateway asking itself for a session.
 
 An empty or whitespace-only value counts as unset. A malformed one is a startup
 error, never a silent default: `IDENTITY_JWKS_TTL_MS=soon` refuses to boot
-rather than quietly fetching identity on every request.
+rather than quietly fetching identity on every request, and `REDIS_URL=redis//redis`
+refuses to boot rather than falling back to memory.
+
+**What Redis does and does not fix.** It makes the **rate-limit counters**
+shared and durable. It does **not** make browser sessions shared: the
+`SessionStore` is a `Map` in one process regardless. See
+[guard](/services/guard/).
 
 ### billing
 
@@ -132,11 +152,29 @@ the source. An empty, non-base64, or wrong-length value is a boot failure, and
 the error names the variable and never its value — a variable's value in a boot
 error is a credential in whatever the operator pastes the error into.
 
+### darkroom
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `8080` | Listen port. |
+| `DATABASE_URL` | — | Postgres DSN. |
+| `DARKROOM_OBJECT_STORE` | — | `memory` or `s3`. `memory` for development; the deployment build is `s3`. |
+| `DARKROOM_S3_BUCKET` | — | Bucket name. |
+| `DARKROOM_S3_ENDPOINT` | — | Account-scoped endpoint for R2. `region=auto` with no endpoint is **refused at startup** so a bucket-only config cannot silently resolve `s3.amazonaws.com`. |
+| `DARKROOM_S3_REGION` | `auto` for R2 | A real region on an R2 endpoint is **refused at startup**, naming the variable and the value. |
+| `DARKROOM_JWKS_URL` | — | identity's key set. `darkroom` verifies tokens **locally** and reads `account_id` and scopes from the verified token. |
+| `DARKROOM_ISSUER` · `DARKROOM_AUDIENCE` | — | The expected `iss` and `aud`. |
+| `DARKROOM_ENV` | `production` | `development` enables the HMAC verifier, which exists only behind `--features dev-auth`. |
+| `DARKROOM_LOG_FORMAT` · `DARKROOM_LOG_LEVEL` | — | Log shape. |
+
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are the AWS SDK's own chain, and
+an R2 API token has exactly those two halves — so no cafaye-specific credential
+variable exists for object storage.
+
 ## HTTP surfaces
 
-What each service answers today. `identity`'s `/v1/accounts` routes are
-registered in code but **not yet in its OpenAPI document**, which currently
-covers only `/v1/users`, `/v1/session`, `/v1/me`, `/healthz`, `/readyz`.
+What each service answers today. `identity` serves **two** documents — `/v1` and
+the OIDC provider surface — and `parlor`'s routes are not in either.
 
 ### identity — port 8080
 
@@ -158,9 +196,42 @@ covers only `/v1/users`, `/v1/session`, `/v1/me`, `/healthz`, `/readyz`.
 | PATCH | `/v1/accounts/{accountID}/members/{userID}` | **owner** | Change a role. |
 | DELETE | `/v1/accounts/{accountID}/members/{userID}` | admin | Remove a member. |
 | POST | `/v1/invitations/accept` | bearer or cookie | Redeem an invitation. |
+| POST | `/v1/accounts/{accountID}/oidc-clients` | **owner** | Register an OIDC client. Owner-gated because `identity` has no platform-admin role yet. |
+| DELETE | `/v1/accounts/{accountID}/oidc-clients/{clientID}` | **owner** | Revoke a client. |
 
 Roles are `owner`, `admin`, `member` — a PostgreSQL enum, ordered, and the
 ordering is what `AtLeast` compares.
+
+**The OIDC provider surface**, delegated per-path to the `zitadel/oidc` library's
+own router — deliberately **not** a root `Mount`, because that would hand the
+library the unmatched-path case and give a client that guessed a route wrong two
+error shapes to parse.
+
+| Path | What |
+| --- | --- |
+| `/.well-known/*` | Discovery and the JWKS. `guard` verifies against `/.well-known/jwks.json`. |
+| `GET`/`POST` `/oidc/authorize` | The authorization request. `GET` is not an accident: OIDC Core permits both and a product behind a strict corporate proxy may have no choice. |
+| `GET` `/oidc/callback` | The redirect target. |
+| `POST` `/oidc/token` · `GET`/`POST` `/oidc/userinfo` | Token and userinfo. |
+| `/oidc/login` | The login page, bound to this service's own sessions. |
+
+Not mounted, and **absent from the discovery document** rather than stubbed:
+refresh tokens, the implicit flow, client credentials, dynamic client
+registration, introspection, the revocation endpoint, end-session, and the device
+flow.
+
+### darkroom — port 8080
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| POST | `/v1/uploads` | `201` with a presigned `upload_url` and a `storage_key`. The bytes never pass through this service. |
+| POST | `/v1/uploads/{id}/complete` | `200` asset ready, or `409` (object absent) / `422` (checksum mismatch). Reads the object back and hashes it. |
+| GET | `/v1/assets` | List, tenant-scoped. |
+| GET · DELETE | `/v1/assets/{id}` | Read one; delete. |
+| POST · GET | `/v1/assets/{id}/variants` | Generate; list. |
+
+Authenticated against identity's key set, locally. `Idempotency-Key` on the
+creating calls.
 
 ### billing — port 3000 in development, 80 in the image
 
@@ -177,11 +248,35 @@ ordering is what `AtLeast` compares.
 | POST | `/v1/plans` | bearer | Create a plan. |
 | GET | `/v1/plans/{slug}` | bearer | Read by **slug**. |
 | PATCH | `/v1/plans/{id}` | bearer | Write by **id**. |
+| GET | `/v1/subscriptions` | bearer | List. |
+| POST | `/v1/subscriptions` | bearer | Create. **Returns a Checkout URL and writes nothing.** |
+| GET | `/v1/subscriptions/{id}` | bearer | One subscription. |
+| POST | `/v1/subscriptions/{id}/cancel` | bearer | Ask the processor to cancel. Returns the row unchanged. |
+| POST | `/v1/subscriptions/{id}/change_plan` | bearer | Ask the processor to move plans. Returns the row unchanged. |
+| GET | `/v1/subscriptions/{id}/entitlements` | bearer | What the plan grants. |
 | POST | `/v1/webhooks/stripe` | **Stripe signature** | Payment-processor events in. |
 
 Money crosses the wire as integer minor units and nothing else:
 `{"price":{"amount_minor":1900,"currency":"USD"}}`. `{"amount_minor":19.00}` and
 `{"amount_minor":"19.00"}` are both `422`.
+
+### courier — port 4000
+
+`/healthz` and `/readyz` sit at the root, **outside** `/api` and `/v1`, and are
+exempt from the production SSL redirect: an orchestrator that gets a `301` to
+https from `/healthz` reads `courier` as dead.
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| GET | `/v1/notification_preferences/{user_id}` | Read one recipient's preferences. |
+| GET · POST | `/v1/webhook_endpoints` | List; register a subscriber URL. |
+| GET · PATCH · DELETE | `/v1/webhook_endpoints/{id}` | Read; update; remove. |
+| POST | `/v1/webhook_endpoints/{id}/test` | Send a signed test delivery. |
+
+The `webhook_endpoints` scope sits behind its own authorization. The
+notification-preferences routes are deliberately **outside** it: reading and
+changing one recipient's preferences is not the same authority as registering a
+destination the service will sign and dial on somebody else's behalf.
 
 ### muse — port 8000
 
@@ -217,11 +312,10 @@ re-authenticate against a healthy service.
 ## Who talks to whom
 
 Drawn from the `dependencies` and `consumes` blocks of each `cafaye.yml`.
-
 ```
                     browser
                        │
-                   parlor (3000) ──────────▶ identity  POST /v1/users
+                    parlor (3000) ──────────▶ identity  POST /v1/users
                        │                     identity  POST /v1/session
                        │                     identity  DELETE /v1/session
                        │                     identity  GET  /v1/me
@@ -231,13 +325,14 @@ Drawn from the `dependencies` and `consumes` blocks of each `cafaye.yml`.
                        └── verifies tokens against identity's JWKS
                            (via IDENTITY_ISSUER, no call per request)
 
-   stripe ──signed──▶ billing (3000/80)      billing ──▶ Postgres (own)
+                   darkroom (8080) ───────▶ identity  JWKS only, no per-request call
+
+   stripe ──signed──▶ billing (3000/80) ──out──▶ stripe   (Checkout, cancel, change plan)
                           │
                           └── outbox_events ──▶ (no publisher loop yet)
 
    muse (8000) ──declared dependency──▶ identity, guard
-   courier (4000) ──declared dependency──▶ (none)
-   darkroom ──does not exist
+   courier (4000) ──declared dependency──▶ (none)  ──out──▶ subscriber webhooks
 ```
 
 `muse` declares `identity` and `guard` as dependencies, which is what tells
@@ -246,7 +341,8 @@ they depend on Postgres, not on a sibling service.
 
 **`guard` proxies nothing yet.** Its dependency on `identity` is real (it dials
 it for `/auth/*` and fetches its JWKS) but no request is routed to any cafaye
-service. The service registry that decides where a path goes does not exist.
+service. The thing that decides where a path goes does not exist — `pantry`
+answers *what a service is*, not *where a path goes*.
 
 ## What is not wired yet
 
@@ -256,40 +352,61 @@ the reason one of the [runbooks](/runbooks/) reads the way it does.
 | Gap | Consequence for an operator |
 | --- | --- |
 | **No broker.** No service starts an outbox publisher loop. `identity`'s only `Publisher` is a no-op, on purpose. | Events accumulate in `outbox_events` unpublished. No cross-service reaction happens. Alert on the age of the oldest unpublished row. |
-| **`guard` routes nothing.** | `/v1/me` proves auth and forwards nothing. There is no path-based routing, and no service registry. |
-| **Rate limits are per process.** `guard`'s counters are a `Map` in one replica. | A client gets its allowance from *each* replica, and counts reset on restart. A single-replica deployment is the only one where the limit means what it says. |
-| **Sessions are per process.** `guard`'s `SessionStore` is a `Map`. | A browser's session dies with the replica it signed in on, and is lost on restart. This is the "login loops back to the sign-in page" entry in [troubleshooting](/troubleshooting/). |
-| **No MFA, no OIDC redirect, no API tokens, no admin API in `identity`.** | `guard` verifies a password login. There is no TOTP enrollment and no authorization-code flow. |
+| **`guard` routes nothing.** | `/v1/me` proves auth and forwards nothing. There is no path-based routing behind the gateway. |
+| **`guard` sessions are per process.** The `SessionStore` is a `Map`, and Redis does not change that. | A browser's session dies with the replica it signed in on, and is lost on restart. This is the "login loops back to the sign-in page" entry in [troubleshooting](/troubleshooting/), and it is why one replica is still the right answer for `guard`. |
+| **No MFA in `identity`.** It is a packet in flight, not a shipped feature. | There is no TOTP enrollment. A security model that assumes a second factor has to assume it elsewhere. |
+| **`identity` has no refresh tokens, admin API, scoped API tokens, email verification or password reset.** Each is absent from the discovery document rather than stubbed. | Access tokens live fifteen minutes and cannot be renewed. A user who forgets a password has no path back in. |
 | **`muse` auth is a stub.** | The bearer header's presence is checked and the token is not verified. Do not put `muse` behind anything you care about. |
 | **No vault key rotation.** `key_version` exists in the table and is always 1. | `MUSE_VAULT_KEY` cannot be rotated in place. See [rotating secrets](/runbooks/secret-rotation/) for what that means today. |
-| **`billing` never calls Stripe.** | `processor`, `processor_product_id`, and `processor_price_id` are stored and returned, and all three are null in practice. There is no checkout, no portal, no subscription table. |
-| **`courier` sends nothing.** | No Swoosh, no provider adapter, no job queue, no preference store. An invitation token has to be delivered by hand. |
+| **`courier` publishes one event.** Only `courier.email.delivered`. The other four declared types need a provider webhook that is a later packet. | A bounced or complained address is not yet visible anywhere, and suppression is not yet automatic. |
+| **`parlor`'s manifest does not validate,** and there is no admin surface and no Playwright suite. | `caf contract lint` is red on it, and the shell is not a finished template to clone. |
+| **No collector and no observability stack.** The telemetry contract is shipped; nothing is deployed to receive it. | There is no shared error dashboard, and `error.type` is not yet a cross-service grouping key. See [Observability](/observability/). |
 | **No TLS termination in the services.** | `identity` binds plain HTTP. Terminate TLS at the edge, and note that `guard`'s default issuer is already an `https://` origin. |
 
-## Manifest drift you may hit
+## Cross-repo drift audit
 
-`caf contract lint` is the tool that finds this, and on the current tree it
-fails on three repositories. Recording it here because you will hit it, and
-because a linter that is always red gets ignored:
+`caf contract lint` finds the mechanical part of this, and it was **run against
+the workspace**, not recalled:
+
+```sh
+cd cafaye/caf && go run ./cmd/caf contract lint /path/to/cafaye
+```
+
+On the current tree: **38 manifests valid, one repository invalid.**
 
 | Repository | What the linter says |
 | --- | --- |
-| `caf` | `is missing required fields ["language", "core", "repository", "owner"]` |
-| `courier` | `exposes/events/0: "email.queued" does not match "^[a-z][a-z0-9]*(-[a-z0-9]+)*\.[a-z][a-z0-9]*(_[a-z0-9]+)*\.[a-z][a-z0-9]*(_[a-z0-9]+)*$"` |
 | `parlor` | `is missing required fields ["name", "language", "core", "repository", "owner"]` |
-
-The `courier` one is a real disagreement, not a typo: its manifest uses the
-two-segment form (`email.queued`) while the schema `caf` vendors requires three
-(`courier.email.queued`). `core`'s catalog lists courier's events under a
-`courier.` prefix. Fixing it is a decision about which spelling wins, and specs
-are manager-owned — see [Contracts](/contracts/).
 
 `parlor`'s manifest is still the pre-`core` `apiVersion: cafaye/v0-draft` shape
 with no `name` at the top level. It is documentation of intent, and it does not
 validate.
 
-Verify against your own checkout rather than trusting this table:
+**Two repositories that used to fail here no longer do, and this page said
+otherwise until now.** `caf`'s manifest gained its required fields, and
+`courier`'s five event types were corrected from the two-segment form
+(`email.queued`) to the three-segment one (`courier.email.queued`) — `courier`
+caught this itself with `caf contract lint` and renamed them. That rename changes
+the `type` on events already on the bus; [Upgrading](/upgrading/) has the order to
+move your consumers in.
 
-```sh
-caf contract lint /path/to/cafaye
-```
+Verify against your own checkout rather than trusting this table. A drift audit
+nobody re-runs is a changelog with a table in it.
+
+### The drift the linter cannot see
+
+All of these are real, and none of them is a lint failure. They are recorded here
+because a reader will hit one.
+
+| Where | What |
+| --- | --- |
+| `core/fleet.yml` | Transcribed at the commits named on each row, and **three of those have moved since**. `identity`'s manifest now declares `identity.oidc_client.created` and `.revoked`; `courier`'s `manifestViolations` list still records the two-segment spellings `courier` has since fixed. `fleet.yml` is the file `caf contract lint` reads for the catalog, so a stale copy is a stale catalog answer. |
+| `identity`'s emitted events | It writes `identity.account.created`, `identity.member.invited`, `identity.member.accepted`, `identity.member.role_changed` and `identity.member.removed`, and **declares none of them** in `exposes.events`. `identity.member.accepted` is also not core's spelling: core's catalog row says `identity.member.joined`, and `accepted` is not in core's action vocabulary. |
+| `identity.oidc_client.created` / `.revoked` | Declared in `identity`'s manifest, and **neither has a catalog row or a payload schema in core**. A type advertised with no published contract behind it is the exact gap core's catalog assertions exist to close. |
+| `billing`'s subscription and plan payloads | `billing` emits its own ids; core's schemas describe the processor's. `billing`'s own contract test lists the four missing and four unexpected fields rather than absorbing them. See [Upgrading](/upgrading/#2-billingsubscriptionstarted-no-longer-declares-cafaye-prefixed-ids). |
+| `courier`, `guard`, `identity` | Still pin `core: ^0.1.0`, which does not admit the `0.2` spec several of them compile against. Every service has to move at the same time, so the pin is a manager's decision rather than a per-repo edit. |
+| `courier`'s README | Calls the repository "the v0 scaffold… deliberately no notification logic yet" and lists Swoosh, preferences, Oban and outbound webhooks as "not here yet". All of them landed. The manifest in the same repository is current; the prose above it is not. |
+| `identity`'s README | Opens with "**v0 is a skeleton.** There is no auth logic here yet", which stopped being true several packets ago. Its "Not built yet" list further down is current. |
+| `pantry`'s README | Says "the cafaye repositories are private, so a hosted runner cannot clone them", which contradicts the org being public. It is also the stated reason its `workspace-drift` CI job is disabled rather than merely absent. |
+| `GET /v1/accounts/{id}/members` | Returns only each member's `role`; `account_id`, `user_id` and `created_at` come back empty. The membership is correct — verify with the member's own token instead. |
+| `identity`'s migrations | `goose up` is a **prerequisite** for the OIDC tests, not a nicety. Without it they fail with `relation "public.oidc_clients" does not exist` — an error naming a relation rather than the missing step. |
