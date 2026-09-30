@@ -22,7 +22,7 @@ database.
 
 | Service | Owns | Language | Reached by |
 | --- | --- | --- | --- |
-| [`identity`](https://github.com/cafaye/identity) | Users, sessions, accounts and tenancy, roles, invitations, OIDC, MFA *(MFA in flight)* | Go | HTTP `/v1/*`; verified by `guard` |
+| [`identity`](https://github.com/cafaye/identity) | Users, sessions, accounts and tenancy, roles, invitations, OIDC, MFA | Go | HTTP `/v1/*`; verified by `guard` |
 | [`billing`](https://github.com/cafaye/billing) | Plans, customers, money, usage metering, payment-processor webhooks in | Ruby | HTTP `/v1/*`; a Stripe-signed webhook endpoint |
 | [`courier`](https://github.com/cafaye/courier) | Transactional email, push, notification preferences, **every outbound webhook** | Elixir | HTTP; plus events every other service publishes to it |
 | [`darkroom`](https://github.com/cafaye/darkroom) | Media: uploads, variants, object storage | Rust | HTTP + presigned object-storage URLs |
@@ -174,7 +174,8 @@ Stated plainly, because a page that only sells the design is a marketing page.
   smoothed over.
 - **The boundaries are younger than the design.** `guard` routes nothing yet.
   `parlor`'s manifest is still the pre-`core` draft shape.
-  `identity` has no MFA. `muse` does not verify the token it is handed.
+  `identity` cannot reset a password or renew an OIDC access token.
+  `muse` does not verify the token it is handed.
   Read the status line on every service page before relying on it.
 
 ## Where the observability contract sits

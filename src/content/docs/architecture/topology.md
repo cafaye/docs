@@ -354,7 +354,7 @@ the reason one of the [runbooks](/runbooks/) reads the way it does.
 | **No broker.** No service starts an outbox publisher loop. `identity`'s only `Publisher` is a no-op, on purpose. | Events accumulate in `outbox_events` unpublished. No cross-service reaction happens. Alert on the age of the oldest unpublished row. |
 | **`guard` routes nothing.** | `/v1/me` proves auth and forwards nothing. There is no path-based routing behind the gateway. |
 | **`guard` sessions are per process.** The `SessionStore` is a `Map`, and Redis does not change that. | A browser's session dies with the replica it signed in on, and is lost on restart. This is the "login loops back to the sign-in page" entry in [troubleshooting](/troubleshooting/), and it is why one replica is still the right answer for `guard`. |
-| **No MFA in `identity`.** It is a packet in flight, not a shipped feature. | There is no TOTP enrollment. A security model that assumes a second factor has to assume it elsewhere. |
+| **`identity` has no password reset, no email verification, and no OIDC refresh tokens.** Each is absent from the discovery document rather than stubbed. | A user who forgets a password has no path back in, and access tokens live fifteen minutes and cannot be renewed. MFA *is* built, but `MFA_ENCRYPTION_KEY` must be supplied — unset and the management routes are absent. |
 | **`identity` has no refresh tokens, admin API, scoped API tokens, email verification or password reset.** Each is absent from the discovery document rather than stubbed. | Access tokens live fifteen minutes and cannot be renewed. A user who forgets a password has no path back in. |
 | **`muse` auth is a stub.** | The bearer header's presence is checked and the token is not verified. Do not put `muse` behind anything you care about. |
 | **No vault key rotation.** `key_version` exists in the table and is always 1. | `MUSE_VAULT_KEY` cannot be rotated in place. See [rotating secrets](/runbooks/secret-rotation/) for what that means today. |
@@ -372,7 +372,8 @@ the workspace**, not recalled:
 cd cafaye/caf && go run ./cmd/caf contract lint /path/to/cafaye
 ```
 
-On the current tree: **38 manifests valid, one repository invalid.**
+On the current tree, run on 2026-09-30: **every repository valid except one.**
+`parlor` fails:
 
 | Repository | What the linter says |
 | --- | --- |
@@ -381,6 +382,13 @@ On the current tree: **38 manifests valid, one repository invalid.**
 `parlor`'s manifest is still the pre-`core` `apiVersion: cafaye/v0-draft` shape
 with no `name` at the top level. It is documentation of intent, and it does not
 validate.
+
+**The manifest *count* moves and the answer does not.** This run reported 38
+manifests: 36 `OK`, 2 `INVALID`. The duplicate is a worker worktree of `parlor`
+sitting beside it, which the walk finds because a worktree is a checkout like
+any other — and worktrees come and go. So the number to quote is *which
+repositories* fail, not *how many manifests*. On the twelve primary checkouts
+the answer is one: `parlor`.
 
 **Two repositories that used to fail here no longer do, and this page said
 otherwise until now.** `caf`'s manifest gained its required fields, and
@@ -401,8 +409,8 @@ because a reader will hit one.
 | Where | What |
 | --- | --- |
 | `core/fleet.yml` | Transcribed at the commits named on each row, and **three of those have moved since**. `identity`'s manifest now declares `identity.oidc_client.created` and `.revoked`; `courier`'s `manifestViolations` list still records the two-segment spellings `courier` has since fixed. `fleet.yml` is the file `caf contract lint` reads for the catalog, so a stale copy is a stale catalog answer. |
-| `identity`'s emitted events | It writes `identity.account.created`, `identity.member.invited`, `identity.member.accepted`, `identity.member.role_changed` and `identity.member.removed`, and **declares none of them** in `exposes.events`. `identity.member.accepted` is also not core's spelling: core's catalog row says `identity.member.joined`, and `accepted` is not in core's action vocabulary. |
-| `identity.oidc_client.created` / `.revoked` | Declared in `identity`'s manifest, and **neither has a catalog row or a payload schema in core**. A type advertised with no published contract behind it is the exact gap core's catalog assertions exist to close. |
+| `identity`'s emitted events | It declares **five** types — `identity.user.created`, `identity.oidc_client.created`, `identity.oidc_client.revoked`, `identity.mfa.enabled`, `identity.mfa.disabled` — and writes **ten**. `identity.account.created`, `identity.member.invited`, `identity.member.accepted`, `identity.member.role_changed` and `identity.member.removed` are written and **declared in none of them**. Of the ten, only `identity.user.created` has a payload schema in core; six more have a catalog row and no schema. |
+| `identity.member.accepted`, `identity.oidc_client.created` / `.revoked` | **No catalog row and no payload schema in core at all.** `accepted` is also not core's spelling — core's catalog row says `identity.member.joined`, and `accepted` is not in core's action vocabulary. The two OIDC types are advertised in the manifest with no published contract behind them, which is the exact gap core's catalog assertions exist to close. |
 | `billing`'s subscription and plan payloads | `billing` emits its own ids; core's schemas describe the processor's. `billing`'s own contract test lists the four missing and four unexpected fields rather than absorbing them. See [Upgrading](/upgrading/#2-billingsubscriptionstarted-no-longer-declares-cafaye-prefixed-ids). |
 | `courier`, `guard`, `identity` | Still pin `core: ^0.1.0`, which does not admit the `0.2` spec several of them compile against. Every service has to move at the same time, so the pin is a manager's decision rather than a per-repo edit. |
 | `courier`'s README | Calls the repository "the v0 scaffold… deliberately no notification logic yet" and lists Swoosh, preferences, Oban and outbound webhooks as "not here yet". All of them landed. The manifest in the same repository is current; the prose above it is not. |

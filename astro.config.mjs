@@ -58,6 +58,15 @@ export default defineConfig({
       // is how a rename lands as a silent gap in somebody's webhook handler.
       sidebar: [
         { label: 'Home', link: '/' },
+        // `Hosted pilot` sits second, above `Start here`, because it is read by a
+        // different person at a different moment: somebody who has already
+        // evaluated the platform and is now blocked, not somebody deciding
+        // whether to adopt it. Burying it under Runbooks would hide it from the
+        // only reader who needs it.
+        {
+          label: 'Hosted pilot',
+          items: [{ slug: 'pilot' }],
+        },
         {
           label: 'Start here',
           items: [{ slug: 'getting-started' }, { slug: 'contracts' }],

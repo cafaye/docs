@@ -490,9 +490,9 @@ less than it appears to:
 | `courier` | nothing, but it needs a database to run at all | Postgres on `localhost:5432` |
 | `kit` | everything, if PyYAML is missing | a virtualenv — the gate exits 1 rather than pretending |
 
-**Or CI never ran at all.** `kit`'s reusable workflow is not callable from GitHub
-yet, and **eight of thirteen repositories have no workflow**, so a green badge on
-those is an absence of evidence.
+**Or CI never ran at all.** `identity` and `docs` have no workflow on `master`,
+so a green badge on either is an absence of evidence. Everywhere else the badge
+may exist and still be green having skipped the tier above.
 
 ### Do
 

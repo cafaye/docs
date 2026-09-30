@@ -84,17 +84,20 @@ it.
 ### CI
 
 The gate command is `bin/prime`, and that is what CI should run: build plus the
-smoke test, no secrets, nothing published. **There is no CI workflow in this
-repository**, and that is the same for most of the fleet: `kit`'s reusable
-workflow sits at `workflows/ci.reusable.yml`, which GitHub cannot resolve —
-reusable workflows are only callable from `.github/workflows/` in the owning
-repository — so a repository calling it gets a workflow-not-found error.
+smoke test, no secrets, nothing published. **There is still no CI workflow in
+this repository**, and `identity` is the only other one without.
 
-That is being fixed in `kit`. Until it lands, the honest options here are a job
-that runs `bin/prime` directly, or none at all. Do not wire this repository to
-`cafaye/kit/workflows/ci.reusable.yml@master` and call it done: it looks correct
-and it fails at run time. [Running the gates](/running-the-gates/) has the
-fleet-wide picture.
+`kit`'s reusable workflow used to sit at `workflows/ci.reusable.yml`, which
+GitHub cannot resolve — reusable workflows are only callable from
+`.github/workflows/` in the owning repository. **It has moved**, and seven
+services now call it at `uses: cafaye/kit/.github/workflows/ci.reusable.yml@master`,
+which is correct. Wiring this repository to it is therefore possible now; it was
+not on `docs-03`, and this README said so until now.
+
+What is still worth saying: a badge is worth only what it ran. Even wired up,
+the interesting part of most of the fleet's suite is a second tier that does not
+run by default. [Running the gates](/running-the-gates/) has the fleet-wide
+picture.
 
 ## Content
 

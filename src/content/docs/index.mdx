@@ -17,6 +17,11 @@ alive with the runbooks on this site.
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid stagger>
+  <Card title="Hosted pilot" icon="right-arrow">
+    Already decided? The shortest path from nothing to a running deployment,
+    with the gaps stated before you commit rather than after.
+    [Hosted pilot onboarding](/pilot/)
+  </Card>
   <Card title="Start here" icon="rocket">
     Install the CLI, run a service against local Postgres, and see what exists
     today — with every unbuilt command marked as such.
@@ -84,14 +89,20 @@ no service starts an outbox publisher loop, so an event is a row and nothing
 more. Three of the seven services are built past their first milestone
 (`darkroom` ships signed uploads and Cloudflare R2; `courier` ships outbound
 webhooks over the Standard Webhooks spec; `guard` ships Redis-backed rate
-limits), and three have a gap a reader will hit: **`identity` has no MFA**,
-`muse`'s auth does not verify the token it is given, and **`guard` routes
-nothing**. Every service page states plainly what is built and what is not, and
-[Getting started](/getting-started/) runs the whole path end to end with the
-commands that actually exist today.
+limits), and three have a gap a reader will hit: **`identity` cannot reset a
+password or renew an access token**, `muse`'s auth does not verify the token it
+is given, and **`guard` routes nothing**. Every service page states plainly what
+is built and what is not, and [Getting started](/getting-started/) runs the whole
+path end to end with the commands that actually exist today.
 
-**Most repositories also have no CI.** `kit`'s reusable workflow shipped but is
-not yet callable from GitHub, so a green gate on eight of the thirteen
-repositories rests on somebody having run the suite by hand. See [Running the
-gates](/running-the-gates/).
+**The licensing is unfinished and uneven.** One repository has a licence file
+(MIT), four declare a licence in their manifest, `muse` declares **AGPL-3.0-only**,
+and the rest state none at all. If you are deciding whether to build on this
+commercially, read [what the licence
+permits](/pilot/#the-licence--read-this-one) before you do.
+
+**A green badge is only worth what it ran.** `kit`'s reusable workflow is callable
+now and seven services call it, but **two repositories have no workflow at all**
+and most of the fleet keeps its interesting tests in a second tier that does not
+run by default. See [Running the gates](/running-the-gates/).
 :::

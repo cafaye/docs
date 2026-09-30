@@ -54,19 +54,57 @@ checked 10 tools, 10 ok, 0 missing
 
 It checks ten tools, in that order: `git`, `docker`, `docker compose`, `tilt`,
 `go`, `ruby`, `elixir`, `python` (looked up as `python3` then `python`), `bun`,
-`rust` (`rustc` then `cargo`). `doctor` **always exits 0** — it is a report
-about a machine, not a gate — so a `missing` row is something you read, not a CI
-failure.
+`rust` (`rustc` then `cargo`). That list is the `tools` table in
+`caf/internal/cli/doctor.go`, one row each, in that order. `doctor`
+**always exits 0** — it is a report about a machine, not a gate — so a `missing`
+row is something you read, not a CI failure.
 
 You do not need all ten. You need the languages of the services you intend to
 run, plus `git` and `docker`. `identity` alone needs `go`; `parlor` needs `bun`.
 
+Run it with no argument and, having no project to plan, it prints one line after
+the table:
+
+```
+project .: no manifest: no cafaye.yml in .; a project declares its service in one
+(run "caf init" to create it, or pass the project directory as the argument)
+```
+
+That is not a failure. Point it at a project directory to get the **second
+table**, which is the one the first cannot answer — whether the container
+runtime is *answering*, whether the machine has the memory and CPUs a stack
+needs, whether the ports the stack publishes are free, and whether the
+toolchain for the language in that project's `cafaye.yml` is installed:
+
+```sh
+caf doctor ../identity
+```
+
+```
+project /path/to/identity: identity (go), 3 services in identity-dev
+check              status  detail
+container runtime  ok      /usr/local/bin/docker
+runtime running    ok      server 29.4.0
+memory             ok      16 GiB, need 4 GiB
+cpu                ok      8, need 4
+port 8080          free    -
+toolchain go       ok      /Users/kaka/.local/share/mise/shims/go
+checked 6 project checks, 6 ok
+```
+
+Three rows there are invisible from the tool table. `runtime running` asks the
+Docker **server**, so an installed-but-stopped runtime reads `unreachable` while
+the table above says `ok`. `memory` and `cpu` hold a floor of 4 GiB and 4 CPUs
+for a database, a cache and a service at once. And the ports come from the same
+plan `caf dev` would build, so the two cannot drift. `-tools-only` prints the
+first table alone.
+
 :::caution[What the check is not]
-`doctor` proves a binary is on `PATH`. It does not prove the version, that
-Docker is *running* (a stopped Docker Desktop daemon is still on `PATH`), or
-that anything is reachable. Every service repository pins its own toolchain in
-its own `mise.toml`; `mise install` inside that repository is the versioned
-answer, and this page does not repeat those pins.
+`doctor` proves a binary is on `PATH`. It does not prove the version, and in the
+first table it cannot prove that Docker is *running* — only the second table can,
+by asking the server. Every service repository pins its own toolchain in its own
+`mise.toml`; `mise install` inside that repository is the versioned answer, and
+this page does not repeat those pins.
 :::
 
 ## Step 2 — install `caf`
@@ -416,6 +454,13 @@ psql muse -f migrations/00002_vault_secrets.sql
 In production, run `up-by-one` (or the equivalent) as a single ordered job
 *before* the new image rolls out, and fail the deploy on a non-zero exit.
 
+**On a `caf dev` stack, run them from inside the compose network.** The
+rendered file publishes only the service's own port, so `goose` on the host has
+nothing to connect to, and the first request you make before migrating fails with
+a bare `500` whose real reason — `relation "users" does not exist` — is only in
+the service's logs. [Hosted pilot onboarding](/pilot/#step-5--apply-the-migrations)
+has the loop that was run, and why it does not record a goose version.
+
 ## Step 6 — deploy to your own infrastructure
 
 <span class="badge caution">Coming soon</span> — `caf deploy` parses its flags
@@ -512,6 +557,9 @@ dashboard you were about to build.
 
 ## What to read next
 
+- [Hosted pilot onboarding](/pilot/) — the same path, aimed at somebody who has
+  already decided, with the licence position and every gap stated before you
+  commit.
 - [Upgrading](/upgrading/) — if you already run a deployment and are moving to
   the current contracts.
 - [Architecture](/architecture/) — what each service owns, and why the

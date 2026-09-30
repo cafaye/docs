@@ -10,18 +10,25 @@ asks this one who is calling and what they may do. It is written in **Go**
 because it holds the keys to everything and wants a static binary and a
 compiler's worth of discipline around them.
 
-:::caution[Status: v0 — accounts, tenancy, and the OIDC provider are built]
-Password auth with lockout, **accounts, memberships, roles and invitations**, and
-the **OIDC provider** are built and tested. That means discovery, client
-registration, the authorization-code flow with PKCE, token issuance, and
-**`/.well-known/jwks.json`** — so `guard` now has a real key set to verify
-against. There are two OpenAPI documents: `openapi/v1.yaml` for the `/v1`
+:::caution[Status: v0 — accounts, tenancy, the OIDC provider, and MFA are built]
+Password auth with lockout, **accounts, memberships, roles and invitations**, the
+**OIDC provider**, and **MFA** are built and tested. The OIDC provider means
+discovery, client registration, the authorization-code flow with PKCE, token
+issuance, and **`/.well-known/jwks.json`** — so `guard` has a real key set to
+verify against. There are two OpenAPI documents: `openapi/v1.yaml` for the `/v1`
 surface and `openid/openid.yaml` for the OIDC one.
 
-**Not built:** **MFA (TOTP and recovery codes) is in flight, not shipped**;
-email verification and password reset, OAuth sign-in via goth, scoped API
-tokens, the admin API, and key rotation. No self-service password recovery — a
-user who forgets a password today has no path back in.
+**MFA is TOTP with recovery codes, and it is on the `/v1` surface**: enrollment,
+confirmation, the login challenge at `POST /v1/session/mfa`, recovery-code
+reissue, and `DELETE /v1/mfa` to turn it off. Confirming a factor **revokes every
+session the user holds**. `MFA_ENCRYPTION_KEY` is base64url, exactly 32 bytes,
+seals the TOTP secret at rest and is **never generated** — unset means the
+management routes are **absent** rather than present-and-broken, and a wrong
+length is a startup failure.
+
+**Not built:** email verification and password reset, OAuth sign-in via goth,
+scoped API tokens, the admin API, and key rotation. No self-service password
+recovery — a user who forgets a password today has no path back in.
 
 Inside the OIDC provider specifically not built: refresh tokens (access tokens
 live fifteen minutes and cannot be renewed), the implicit flow, client
@@ -105,28 +112,43 @@ account.**
 **The last owner is never removed.** An owner demoting themselves while they are
 the only owner gets a `422` naming the field and the code `last_owner`.
 
-## Two things to know before you rely on it
+## Three things to know before you rely on it
 
-**`identity` declares three event types and emits more.** Its manifest lists
-`identity.user.created`, `identity.oidc_client.created` and
-`identity.oidc_client.revoked`. It also writes `identity.account.created`,
+**`identity` declares five event types and writes ten.** Its manifest lists
+`identity.user.created`, `identity.oidc_client.created`,
+`identity.oidc_client.revoked`, `identity.mfa.enabled` and
+`identity.mfa.disabled`. It also writes `identity.account.created`,
 `identity.member.invited`, `identity.member.accepted`,
-`identity.member.role_changed` and `identity.member.removed` — and **none of
-those eight is in `core`'s event catalog or has a payload schema.** The two OIDC
-types are the ones that matter to a consumer: they are advertised with no
-published contract behind them. See [Upgrading](/upgrading/).
+`identity.member.role_changed` and `identity.member.removed`.
 
-**MFA is the gap you are most likely to plan around.** If your product's security
-model assumes a second factor, do not assume `identity` provides one yet. It is a
-packet in flight, not a shipped feature.
+**Only `identity.user.created` has a payload schema in `core`.** Six of the
+other nine have a catalog row and no schema; three — both `oidc_client` types
+and `identity.member.accepted` — have **no catalog row at all**, and
+`accepted` is not even core's spelling (core says `identity.member.joined`).
+The two OIDC types are the ones that matter to a consumer: they are advertised
+in the manifest with no published contract behind them. See
+[Upgrading](/upgrading/).
+
+**No password recovery.** `POST /v1/users` creates a user with a password and
+there is no reset, no recovery token, and no admin API to set one. A user who
+forgets their password has no path back in, which in a pilot means somebody
+has to be on the other end of a support channel. Plan for that before you ship
+it, and read the password policy rather than guessing it — this service refuses
+a short password with a `422` naming the field.
+
+**MFA needs a key you supply.** It is built, but `MFA_ENCRYPTION_KEY` is never
+generated: unset, and the management routes are not mounted at all. A local
+stack from `caf dev` will not set it, so a `404` on `/v1/mfa` there is the
+configuration, not a missing feature. See [Hosted pilot
+onboarding](/pilot/#step-7--check-the-two-things-this-stack-is-not-giving-you).
 
 ## The gate
 
 `go test ./...` is green on a machine with no database and no Docker: the
 integration tests skip themselves unless `TEST_DATABASE_URL` is set. Running them
 needs the database **and its migrations** — `goose up` is a deploy step, and
-without it the OIDC tests fail with `relation "public.oidc_clients" does not
-exist` rather than skipping.
+without it the OIDC and MFA tests fail with `relation "public.oidc_clients" does
+not exist` rather than skipping.
 
 ```sh
 bin/prime && go vet ./... && gofmt -l . && go test -race ./...

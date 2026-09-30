@@ -14,22 +14,29 @@ page disagree, the repository is right.
 ## First, the thing that is not true
 
 :::caution[CI is not fleet-wide yet]
-`kit`'s reusable workflow shipped, and **it is currently uncallable**: it sits at
-`workflows/ci.reusable.yml`, and GitHub only resolves a reusable workflow from
-`.github/workflows/` in the repository that owns it. A repository calling
-`cafaye/kit/workflows/ci.reusable.yml@master` gets a "workflow not found" error.
-That is being fixed; until it is, **the reusable CI path does not exist.**
+**`kit`'s reusable workflow is callable now.** It used to sit at
+`workflows/ci.reusable.yml`, where GitHub cannot resolve it, and this page said
+for several packets that the reusable CI path did not exist. It has moved to
+**`.github/workflows/ci.reusable.yml`**, which is the path GitHub requires, and
+seven services now call it as
+`uses: cafaye/kit/.github/workflows/ci.reusable.yml@master`: `caf`, `core`,
+`courier`, `darkroom`, `guard`, `muse` and `parlor`.
 
-What exists on `master` today is **five workflows in five repositories**:
+What exists on `master` today, counted with `git ls-files .github/workflows`:
 
 | Has a CI workflow | Does not |
 | --- | --- |
-| `billing`, `darkroom`, `guard`, `pantry`, `cafaye-rb` | `core`, `caf`, `identity`, `courier`, `muse`, `parlor`, `kit`, `docs` |
+| `billing`, `caf`, `cafaye-rb`, `core`, `courier`, `darkroom`, `guard`, `kit`, `muse`, `pantry`, `parlor` | `identity`, `docs` |
 
-So for most of the fleet, "the gate is green" means *a person ran the suite by
-hand, that day, on that machine.* Run it yourself before you trust a commit, and
-treat a green badge on one of the eight repositories with no workflow as an
-absence of evidence rather than evidence of absence.
+Two repositories have no workflow at all, and for those "the gate is green"
+means *a person ran the suite by hand, that day, on that machine.* Run it
+yourself before you trust a commit, and treat a badge on either of those two as
+an absence of evidence rather than evidence of absence.
+
+**The durable warning is not the count, it is the skipping.** A badge is only
+worth what it ran, and the tiers below are the part that silently does not run
+by default. That has not changed, and it will not change because a workflow
+file exists.
 :::
 
 ## The gate per repository

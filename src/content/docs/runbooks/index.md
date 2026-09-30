@@ -50,11 +50,12 @@ assets pointing at nothing.
 Run them as a job before the new image rolls out, and fail the deploy on a
 non-zero exit. A half-applied migration is worse than one that did not run.
 
-**Most repositories have no CI.** `kit`'s reusable workflow shipped but is not
-yet callable from GitHub, and only five of thirteen repositories have a workflow
-of their own. "The gate is green" usually means somebody ran it by hand, that
-day. [Running the gates](/running-the-gates/) has the commands and the tiers
-that skip.
+**A green badge is only worth what it ran.** `kit`'s reusable workflow is callable
+and seven services now call it, but **two repositories still have no workflow at
+all**, and in most of the fleet the interesting tests sit in a second tier that
+does not run by default. "The gate is green" often means somebody ran the suite
+by hand, that day. [Running the gates](/running-the-gates/) has the commands and
+the tiers that skip.
 
 ## Two facts that shape every runbook here
 
