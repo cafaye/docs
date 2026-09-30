@@ -22,8 +22,28 @@
 node = "22.19.0"
 
 [tasks.prime]
-description = "The gate: install dependencies, build the site, run the smoke test"
+description = "The gate: install dependencies, build the site, run the offline suite"
 run = "./bin/prime"
+
+# The tier `prime` deliberately does not run: it needs a readable checkout of
+# cafaye/core and a built `caf` binary, and a gate that needs a sibling
+# repository is a gate a contributor with one checkout cannot run. It is the
+# only thing here that can catch a documented example contradicting a shipped
+# contract, so it is a named command rather than an afterthought.
+#
+#   mise run prime:contracts
+#
+# CI runs it as its own job and fails the build if it did not run.
+[tasks."prime:contracts"]
+description = "The gate plus the contract tier: examples checked against core's real schemas"
+run = "./bin/prime --contracts"
+
+# The network tier, deliberately separate and deliberately not a `mise run
+# prime` step. See the header of bin/check-external-links for why a slow link
+# fails rather than being retried.
+[tasks."links:external"]
+description = "Check that the site's external links answer (needs the network; no retries)"
+run = "./bin/check-external-links"
 
 [tasks.dev]
 description = "Preview the site at http://localhost:4321"

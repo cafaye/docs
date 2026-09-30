@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # bin/prime — the one command that proves the docs site still builds.
 #
-#   bin/prime          # npm ci, then the build, then the smoke test
-#   bin/prime --fast   # npm ci only
+#   bin/prime             # npm ci, the build, the offline suite
+#   bin/prime --contracts # the above, plus the tier that reads core and caf
+#   bin/prime --fast      # npm ci only
 #
 # WHAT IT PROMISES
 #   Exit 0: the lockfile installs, the site builds, and every page the sidebar
@@ -19,15 +20,37 @@
 #   page's frontmatter and Astro checks every content collection, so a red
 #   build is the real test — tests/smoke.mjs then proves the build produced the
 #   pages the navigation promises.
+#
+# THE TWO TIERS, and why there are two
+#   `npm test` runs the **offline tier**: no network, no sibling checkout, no
+#   toolchain beyond node and bash. That is deliberate. A gate that needs the
+#   internet is a gate that fails in CI for reasons unrelated to the change, and
+#   a contributor with no `core` beside their worktree cannot run the thing that
+#   is supposed to stop them committing.
+#
+#   `--contracts` adds the **contract tier** (tests/contracts.mjs), which is
+#   the only tier that can catch an example contradicting a *shipped* contract:
+#   the `cafaye.yml` examples run through the real `caf contract lint` against
+#   core's real schema, and the event types and span names the prose asserts
+#   are checked against core's catalog and core's span-naming schema. It needs a
+#   readable `core` (CORE_PATH, or a sibling checkout) and a `caf` binary.
+#
+#   It is a flag and not the default because those two prerequisites are real,
+#   and it is a *separate file* rather than a skip because the alternative is
+#   worse: a contract check that quietly does nothing when it cannot find the
+#   contract converts an unknown into a green badge. CI runs it as its own job
+#   and fails the build if this tier did not run. See AGENTS.md.
 
 set -euo pipefail
 
 FAST=0
+CONTRACTS=0
 for arg in "$@"; do
   case "$arg" in
     --fast) FAST=1 ;;
+    --contracts) CONTRACTS=1 ;;
     -h | --help)
-      sed -n '2,20p' "$0"
+      sed -n '2,10p' "$0"
       exit 0
       ;;
     *)
@@ -68,6 +91,15 @@ npm run build
 
 step "npm test"
 npm test
+
+if [ "$CONTRACTS" -eq 1 ]; then
+  step "npm run test:contracts (needs CORE_PATH and a caf binary)"
+  npm run test:contracts
+else
+  step "skipping the contract tier (--contracts); it did NOT run"
+  echo "   Every claim about a shipped contract is UNCHECKED in this run."
+  echo "   Run 'bin/prime --contracts', or 'mise run prime:contracts'."
+fi
 
 version="$(version_of node)"
 step "prime ok (node ${version:-unknown})"

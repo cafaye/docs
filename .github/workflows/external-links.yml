@@ -1,0 +1,121 @@
+---
+# The external-link tier: does anything answer at the far end of the links this
+# site sends a reader to?
+#
+# WHY THIS IS A SEPARATE WORKFLOW FILE, and not a job in ci.yml
+#   Because it needs the network, and a job that needs the network fails for
+#   reasons that have nothing to do with the change under review. On a pull
+#   request that means a contributor's PR goes red because a third party was
+#   slow, and the response to that — the only rational one — is to stop reading
+#   the badge. So this runs on three triggers and **not** on `pull_request`:
+#
+#     - a push to `master`, so a link that broke in a merge is caught the same
+#       day rather than at the next audit;
+#     - a weekly schedule, which is the moment an external link that rots
+#       *slowly* — a repository renamed, a spec document moved — gets noticed.
+#       Nothing about a commit can catch that, because nothing about the commit
+#       changed;
+#     - `workflow_dispatch`, so a maintainer can prove the checker runs rather
+#       than assume it.
+#
+#   The offline half of link checking is not here and does not belong here:
+#   tests/links.mjs asserts the **shape** of every external href — absolute,
+#   `https:`, a real host, no placeholder — with no network at all, and it runs
+#   in the gate on every commit. This file is the liveness half, and it is the
+#   only place in the repository that makes a request.
+#
+# THE POLICY ON SLOW LINKS, because the packet asks for it to be written down
+#   **A link that does not answer in time FAILS this job. It is not retried, and
+#   it is not skipped.** The reasoning: a link a reader cannot reach is a broken
+#   link from the reader's side, and a checker that retries until the network
+#   obliges reports "fine" during exactly the outage it exists to catch.
+#
+#   The cost is real and is the reason for the trigger separation above: a
+#   genuinely slow third party turns this job red with no defect in this
+#   repository. That is a trade, not an oversight. The job prints every
+#   unreachable URL by name, so a red is triageable in one read — the operator
+#   can tell "GitHub was slow" from "that link is gone" without re-running
+#   anything.
+#
+#   Two further things it will not do, both in the script's header: it does not
+#   retry, and it treats a redirect as a reportable outcome rather than a pass.
+name: external-links
+
+on:
+  push:
+    branches: [master]
+  # 06:41 UTC Mondays. Not 06:00, and not on the hour: every other scheduled
+  # workflow in this fleet fires at 06:00 and a fleet-wide thundering herd
+  # against the same hosts is how a link checker gets itself rate-limited, which
+  # it would then report as twenty-six dead links.
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+# Read-only. Nothing here writes, and a checker that could would be a checker
+# with credentials it does not need.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: external links (liveness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # No `setup-node` and no `npm ci`. The script is one file of standard
+      # library — `fetch`, `AbortController`, `node:fs` — and adding a 280-package
+      # install to a job whose entire job is twenty-six HTTP requests would be
+      # the tail wagging the dog. The runner's own node runs it.
+      - name: bin/check-external-links
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/external-links.log"
+          status=0
+          ./bin/check-external-links --timeout 10000 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::bin/check-external-links exited $status — see the names below" >&2
+            exit "$status"
+          fi
+
+      - name: what actually ran
+        # The four counts, kept apart, in the run summary. A summary that said
+        # "23/26 fine" is a claim about the site; ok, redirect, broken and
+        # unreachable are four different facts and only one of them is "fine".
+        shell: bash
+        env:
+          LOG: ${{ runner.temp }}/external-links.log
+        run: |
+          set -euo pipefail
+          count() { grep -E "^$1: [0-9]+$" "$LOG" | tail -1 | cut -d: -f2 | tr -d ' '; }
+          ok="$(count ok)"; redirect="$(count redirect)"
+          broken="$(count broken)"; unreachable="$(count unreachable)"
+          for pair in "ok:$ok" "redirect:$redirect" "broken:$broken" "unreachable:$unreachable"; do
+            if [ -z "${pair#*:}" ]; then
+              echo "::error::could not read the '${pair%%:*}' count out of $LOG." >&2
+              echo "  A checker whose result cannot be read is not a checker." >&2
+              tail -20 "$LOG" >&2 || true
+              exit 1
+            fi
+          done
+          {
+            echo "### external links — what ran"
+            echo
+            echo "| outcome | count |"
+            echo "|---|---|"
+            echo "| ok (2xx) | $ok |"
+            echo "| redirect (3xx) | $redirect |"
+            echo "| broken (4xx/5xx) | $broken |"
+            echo "| unreachable (timeout, DNS, TLS) | $unreachable |"
+            echo
+            echo "No retries. An unreachable link is a failure, not a skip, and not a"
+            echo "second attempt — see the header of \`bin/check-external-links\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$ok ok, $redirect redirect, $broken broken, $unreachable unreachable"

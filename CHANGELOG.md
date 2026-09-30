@@ -10,6 +10,57 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Added
 
+- **CI, and a gate that is a real one.** `.github/workflows/ci.yml` with three
+  jobs — `gate`, `contracts`, `pins` — and `.github/workflows/external-links.yml`
+  for the network tier. The gate runs on the pinned interpreter and *asserts* it,
+  holds the suite size by equality rather than as a floor, and fails if the gate
+  left the tree dirty. The `contracts` job checks out `core`, builds `caf` from
+  source and runs the contract tier; the `pins` job holds the configuration
+  claims and needs no toolchain, so it fails in seconds.
+- **`tests/links.mjs`** — the link half of the gate, and offline by
+  construction. It asserts that every internal link's **`#fragment` names a
+  heading that exists**, which nothing did before: `tests/smoke.mjs` strips the
+  fragment and checks only the page, so a link into a renamed heading passed the
+  whole suite. It also asserts that every internal link names a page that was
+  built, that every configured redirect resolves and shadows no live page, and
+  that every external href is a well-formed `https:` URL with a real host and no
+  placeholder.
+- **`tests/examples.mjs`** — the code examples, checked. Every ` ```sh ` fence
+  parses under `bash -n`, every ` ```json ` fence is valid JSON, every ` ```yaml `
+  fence is a manifest, and every `caf` invocation in a fence names a subcommand
+  the `caf help` output **quoted in `getting-started.md`** lists — read out of
+  this repository's own prose rather than from a list written beside it.
+- **`tests/contracts.mjs`, and `bin/prime --contracts`** — the only tier that can
+  catch an example contradicting something that has actually shipped. Every
+  documented `cafaye.yml` goes through the real `caf contract lint` against
+  core's real schema, as does this repository's own manifest; every event type a
+  page says a service declares is checked against core's catalog; and every span
+  name in `observability.md` is checked against core's `span-naming.schema.json`.
+  It **fails with a message rather than skipping** when `core` or `caf` is
+  missing, because a contract check that cannot find the contract is worse than
+  no contract check.
+- **`bin/check-external-links`** — the network tier, in its own file and on its
+  own triggers (master pushes, a weekly schedule, and `workflow_dispatch`; never
+  a pull request). It reports `ok`, `redirect`, `broken` and `unreachable` as
+  four separate counts, because a summary saying "23/26 fine" is a claim about
+  the site and only one of those four is "fine".
+- **`mise run prime:contracts`** and **`mise run links:external`**, so both
+  tiers are named commands rather than folklore.
+
+### Fixed
+
+- **A deep link that resolved to nothing.** `troubleshooting.md` pointed at
+  `/runbooks/service-down/#darkroom--object-storage-is-a-separate-failure-from-its-database`,
+  and the text it named is a bolded paragraph rather than a heading, so no such
+  anchor was ever emitted and the reader landed at the top of the page. Found by
+  the new fragment check against real content, before it was fixed — the first
+  run of `tests/links.mjs` was red on this and nothing else.
+- **Two JSON fences that were not JSON.** `upgrading.md` showed the two
+  `billing.payment.succeeded` shapes in one fence with `//` comments, and
+  `secret-rotation.md` put two consecutive responses in one fence. Neither is
+  something a reader can paste into a request; both are now one document per
+  fence, with the labels in prose.
+
 - **Upgrading** (`src/content/docs/upgrading.md`) — a migration note for a
   self-hoster with a **running deployment**, not a changelog. Written for
   someone who has to do the work on a Sunday afternoon with a customer waiting.

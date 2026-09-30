@@ -13,7 +13,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test \"tests/**/*.mjs\""
+    "test": "node --test tests/smoke.mjs tests/links.mjs tests/examples.mjs",
+    "test:contracts": "node --test tests/contracts.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.4",
