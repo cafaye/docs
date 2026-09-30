@@ -8,10 +8,12 @@ front of a laptop with a credit card. This page is the whole path from nothing
 to something running that you can show your team, in order, with the failure
 branch beside every step. It is not a tour of the features.
 
-**Every command on this page was run against `caf` at commit `a6dcdc0` and
+**Every command on this page was run against `caf` at commit `460acf3` and
 `identity` at `master`, `35c2576`, on macOS with Docker 29.4.0.** Output is
 quoted where it matters. Where a step could not be run here, the page says so on
 the step rather than implying it was verified. The last section lists those.
+Both repositories move; the numbers on this page are a dated snapshot and the
+ones that matter are the ones you can re-run.
 
 ## Read this before anything else
 
@@ -316,10 +318,12 @@ Point it at a directory and it walks the tree, skipping `.git`, `node_modules`,
 `deps`, `_build` and `target`. On a whole checkout of the platform it prints one
 line per **manifest**, not per repository — `pantry` alone contributes ten,
 because its registry ships a copy of every service's `cafaye.yml`. On the
-workspace this page was written against that was **35 manifests, 30 `OK`, 5
-`INVALID`, exit 1**, and only one of the five is a defect: `parlor`'s. The other
-four are a duplicate of it in a worktree and three deliberate negative fixtures.
-[Topology](/architecture/topology/#cross-repo-drift-audit) has the table:
+workspace this page was written against that was **31 manifests, 26 `OK`, 5
+`INVALID`, exit 1**, and only one of the five is a defect: `parlor`'s. Three of
+the other four are `core`'s own negative test fixtures, which exist to be
+rejected. [Topology](/architecture/topology/#cross-repo-drift-audit) has the
+table — and re-run it, because that number moves with every packet and the
+answer underneath it does not:
 
 ```sh
 caf contract lint /path/to/cafaye

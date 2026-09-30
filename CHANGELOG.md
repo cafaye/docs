@@ -374,11 +374,12 @@ Three claims the site made that are not true, all verified against the real CLI:
   claims changed as a result and were corrected rather than kept:
   - **The session token is 43 characters, not 64.** It is 32 random bytes,
     base64url, unpadded. A number a reader would have counted.
-  - **`caf contract lint` over the workspace is 35 manifests: 30 `OK`, 5
+  - **`caf contract lint` over the workspace is 31 manifests: 26 `OK`, 5
     `INVALID`.** Topology's drift audit now tables all five and says which one
     is a defect: `parlor`. Three of the others are **negative fixtures for
-    `core`'s own conformance tests**, in a worker worktree, that exist to be
-    rejected — which is the concrete reason a raw manifest count is worthless.
+    `core`'s own conformance tests**, now tracked on `core`'s `master` rather
+    than in a worker worktree, which exist to be rejected — the concrete reason
+    a raw manifest count is worthless as a health signal.
   - **`caf contract lint` prints one line per manifest, not per repository.**
     `pantry` alone contributes ten, because its registry ships a copy of every
     service's `cafaye.yml`. The page said "one line per repository" and was
@@ -414,14 +415,23 @@ Three claims the site made that are not true, all verified against the real CLI:
 
 ### Notes
 
-- Every command on `pilot.md` was run, against `caf` at `a6dcdc0` and
+- **The repositories moved underneath this packet, twice, and every claim was
+  re-derived rather than inherited.** `identity` landed `identity-07` and `caf`
+  landed `caf-05` while the page was being written; `core` landed `core-07`
+  while it was being corrected. The CLI claims were re-checked against
+  `caf@460acf3` — still ten commands, still five stubs, still ten tools in the
+  same order, still six project checks, still a 4 GiB / 4 CPU floor — and the
+  manifest count re-measured, which is why it is 31 and not 35. That the number
+  moved twice in an hour **is** the argument for never quoting it, and both pages
+  now say so in those words.
+- Every command on `pilot.md` was run, against `caf` at `460acf3` and
   `identity` at `master` (`35c2576`): `go install`, `caf version`,
-  `caf doctor`, `caf contract lint` (single manifest and whole workspace),
-  `caf dev --dry-run`, `caf dev`, the migration loop, `POST /v1/users`,
-  `POST /v1/session`, `GET /v1/me`, the outbox query, and the JWKS, discovery
-  and MFA 404s. The steps that could not be run — Linux, a production
-  deployment, the MFA enrollment walkthrough, `muse`, Stripe — are named on the
-  page itself, not only here.
+  `caf doctor`, `caf contract lint` (single manifest, whole workspace, and
+  `kit`, which ships none), `caf dev --dry-run`, `caf dev`, the migration loop,
+  `POST /v1/users`, `POST /v1/session`, `GET /v1/me`, the outbox query, and the
+  JWKS, discovery and MFA 404s. The steps that could not be run — Linux, a
+  production deployment, the MFA enrollment walkthrough, `muse`, Stripe — are
+  named on the page itself, not only here.
 - `caf doctor`'s exit code was checked in all three states: with a project, with
   no project at all, and `--help`. **It exits 0 every time.** It is a report,
   not a gate, and the page says so.

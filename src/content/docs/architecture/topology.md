@@ -383,25 +383,25 @@ On the current tree, run on 2026-09-30: **every repository valid except one.**
 with no `name` at the top level. It is documentation of intent, and it does not
 validate.
 
-**The manifest *count* moves and the answer does not.** This run reported 35
-manifests: 30 `OK`, 5 `INVALID`, exit 1. Only one of the five is a defect:
+**The manifest *count* moves and the answer does not.** This run reported 31
+manifests: 26 `OK`, 5 `INVALID`, exit 1. Only one of the five is a defect:
 
 | Invalid manifest | Is it a defect |
 | --- | --- |
 | `parlor/cafaye.yml` | **yes** — the shape above |
 | `parlor-worker-parlor-05/cafaye.yml` | the same file in a worker worktree beside it |
-| `core-worker-core-07/harness/tests/fixtures/nonconforming/cafaye.yml` | **no — it exists to fail.** The directory is named `nonconforming` and the file breaks the name rule on purpose. |
-| `core-worker-core-07/harness/tests/fixtures/nonconforming-conventions/cafaye.yml` | no — it declares another service's event prefix on purpose |
-| `core-worker-core-07/harness/tests/fixtures/unsupported-yaml/cafaye.yml` | no — it declares an unknown key on purpose |
+| `core/harness/tests/fixtures/nonconforming/cafaye.yml` | **no — it exists to fail.** The directory is named `nonconforming` and the file breaks the name rule on purpose. |
+| `core/harness/tests/fixtures/nonconforming-conventions/cafaye.yml` | no — it declares another service's event prefix on purpose |
+| `core/harness/tests/fixtures/unsupported-yaml/cafaye.yml` | no — it declares an unknown key on purpose |
 
 Three of the five are **negative fixtures for `core`'s own conformance tests**,
-and the linter is correctly reporting them as what they are. That is also why
-the raw count is worthless as a health signal: it is a number that moves because
-a worker worktree exists, and because somebody wrote a file whose entire
-purpose is to be rejected. Quote *which repositories* fail, never *how many
-manifests*. Across the twelve primary checkouts that have a manifest — `kit`
-has none, and `caf contract lint kit` exits non-zero saying so — the answer is
-one: `parlor`.
+tracked on `core`'s `master`, and the linter is correctly reporting them as what
+they are. That is why the raw count is worthless as a health signal: three of
+the five permanent failures are files whose entire purpose is to be rejected,
+and the fifth disappears when a worker worktree closes. Quote *which
+repositories* fail, never *how many manifests*. Across the twelve primary
+checkouts that have a manifest — `kit` has none, and `caf contract lint kit`
+exits 1 saying `no cafaye.yml found` — the answer is one: `parlor`.
 
 **Two repositories that used to fail here no longer do, and this page said
 otherwise until now.** `caf`'s manifest gained its required fields, and
