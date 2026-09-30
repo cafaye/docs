@@ -153,7 +153,7 @@ mystery.
 Check the readiness first, then the two calls separately. If `complete` is
 failing and the upload call is not, the problem is between the client and the
 bucket, not in the service. See [darkroom](/services/darkroom/) and [a service is
-down](/runbooks/service-down/#darkroom--object-storage-is-a-separate-failure-from-its-database).
+down](/runbooks/service-down/#step-4--both-probes-are-200-and-the-application-is-broken).
 
 ---
 

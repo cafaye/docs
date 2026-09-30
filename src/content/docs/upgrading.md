@@ -191,11 +191,16 @@ questions and a consumer has to get both right.
 **What you must change.** If your consumer reads `invoice_id` off
 `billing.payment.succeeded` and assumes it is there, it now has to decide which
 shape it is looking at. The honest test is which branch is satisfied, not
-whether a field is null:
+whether a field is null. The invoice-backed branch:
 
 ```json
-{ "invoice_id": "in_…", "subscription_id": "sub_…" }   // invoice-backed
-{ "checkout_session_id": "cs_…" }                        // Checkout-backed
+{ "invoice_id": "in_…", "subscription_id": "sub_…" }
+```
+
+And the Checkout-backed branch, which has no `invoice_id` at all:
+
+```json
+{ "checkout_session_id": "cs_…" }
 ```
 
 **Why this matters before you notice it.** One charge can produce both events —

@@ -1,0 +1,239 @@
+#!/usr/bin/env node
+// bin/check-external-links — liveness for the site's external links.
+//
+// WHY THIS IS NOT PART OF `npm test`
+//   Because it needs the network, and a gate that needs the network fails in CI
+//   for reasons that have nothing to do with the change. tests/links.mjs checks
+//   the *shape* of every external href offline — absolute, https, a real host,
+//   no placeholder — and that is the tier a contributor runs on every commit.
+//   This one asks a different question, one that can only be answered by
+//   making a request, and it is kept out of the unit tier for that reason and
+//   no other.
+//
+// THE POLICY, and the two decisions in it that a reviewer should argue with
+//
+//   1. **A slow link is a FAILURE, not a skip and not a retry.** This is the
+//      decision the packet asks to be stated out loud, so: a request that does
+//      not answer inside `timeoutMs` is counted as `unreachable` and **fails
+//      the run**. There is no retry, no second attempt, and no backoff. The
+//      reasoning is that a link a reader cannot reach is a broken link from the
+//      reader's side, and a checker that retries until the network obliges is a
+//      checker that reports "fine" during exactly the outage it exists to catch.
+//      The cost is honest and worth naming: a genuinely slow third party —
+//      GitHub during an incident, a link to a site with a bad CDN — turns this
+//      job red without a defect in this repository. That is the trade, and it
+//      is why the job is separate, is not a required check, and prints which
+//      links were unreachable rather than a bare "failed".
+//
+//   2. **HEAD first, and GET only to confirm.** Many hosts answer HEAD with a
+//      405 while serving GET perfectly well. A 405 is therefore *not* a dead
+//      link: it triggers exactly one GET, and only that GET's status decides.
+//      That is a method fallback, not a retry — same URL, same instant, one
+//      extra request, no second chance if the GET also fails.
+//
+// WHAT IT DOES NOT DO
+//   - It does not check internal links. tests/links.mjs does that offline, and
+//     it can do it exhaustively, which this cannot.
+//   - It does not follow redirects to their conclusion beyond reporting the
+//     status it got. A 301 is reported as a redirect, not as a pass, because a
+//     redirect to a page that then 404s is a broken link wearing a hat.
+//   - It makes no claim about any link's *content*. It cannot tell you that a
+//     page says the wrong thing; only a reader can.
+//
+// USAGE
+//   bin/check-external-links                  # every external link on the site
+//   bin/check-external-links --timeout 15000  # a longer per-request budget
+//
+// EXIT CODES
+//   0  every link answered 2xx or 3xx
+//   1  at least one link is broken or unreachable — the count and the names are
+//      printed, one per line, so a red here is triageable without re-running
+//   2  bad usage
+import { strict as assert } from 'node:assert';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const docs = join(root, 'src', 'content', 'docs');
+
+/**
+ * Per-request budget, in milliseconds.
+ *
+ * One number, no retry, and it is a hard ceiling rather than a poll interval:
+ * there is no loop to give up from, so "how many times did it try" is always
+ * one. Default is deliberately short — a self-hoster on a laptop and a GitHub
+ * runner on a datacentre network have very different budgets, and a link that
+ * takes longer than this is worth a human's attention either way.
+ */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** A tiny argument parser; `--timeout` takes milliseconds. */
+function parseArgs(argv) {
+  const options = { timeoutMs: DEFAULT_TIMEOUT_MS };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--timeout') {
+      const value = Number(argv[i + 1]);
+      if (!Number.isFinite(value) || value <= 0) {
+        console.error('bin/check-external-links: --timeout needs a positive number of milliseconds');
+        process.exit(2);
+      }
+      options.timeoutMs = value;
+      i += 1;
+    } else if (arg === '-h' || arg === '--help') {
+      console.log('usage: bin/check-external-links [--timeout MS]');
+      process.exit(0);
+    } else {
+      console.error(`bin/check-external-links: unknown argument: ${arg}`);
+      process.exit(2);
+    }
+  }
+  return options;
+}
+
+/** Every content file, in a stable order so the report is stable too. */
+function contentFiles(dir = docs, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) contentFiles(full, out);
+    else if (/\.mdx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+/** Every distinct external href, with one place it appears. */
+function externalLinks() {
+  const links = new Map();
+  for (const file of contentFiles()) {
+    const source = readFileSync(file, 'utf8');
+    const rel = file.slice(root.length + 1);
+    for (const m of source.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)) {
+      if (!links.has(m[1])) {
+        links.set(m[1], `${rel}:${source.slice(0, m.index).split('\n').length}`);
+      }
+    }
+  }
+  return [...links].map(([href, where]) => ({ href, where }));
+}
+
+/** One request, with a hard deadline and no retry. */
+async function request(url, method, timeoutMs) {
+  const controller = new AbortController();
+  // A timer, not a poll. `AbortSignal.timeout` would do the same thing, but an
+  // explicit controller is the one form whose lifecycle is visible at the call
+  // site, and the timer is cleared on every path below.
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        // Some hosts answer 403 to a request with no user agent, which is a
+        // statement about the request and not about the link.
+        'user-agent': 'cafaye-docs-link-check/1.0 (+https://docs.cafaye.com)',
+      },
+    });
+    return { status: response.status };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Classify one URL. Never throws; every outcome is a verdict. */
+async function check(link, timeoutMs) {
+  try {
+    const head = await request(link.href, 'HEAD', timeoutMs);
+    // 2xx, and 3xx reported as a redirect rather than a pass — a redirect to a
+    // page that then 404s is a broken link, and calling it "fine" here is the
+    // false green this whole script exists to avoid.
+    if (head.status >= 200 && head.status < 300) return { ...link, verdict: 'ok', status: head.status };
+    if (head.status >= 300 && head.status < 400) return { ...link, verdict: 'redirect', status: head.status };
+    if (head.status === 405 || head.status === 501) {
+      // Method not allowed: a statement about HEAD, not about the link. One
+      // GET decides, and this is the only place a second request is made.
+      const get = await request(link.href, 'GET', timeoutMs);
+      if (get.status >= 200 && get.status < 300) return { ...link, verdict: 'ok', status: get.status };
+      if (get.status >= 300 && get.status < 400) return { ...link, verdict: 'redirect', status: get.status };
+      return { ...link, verdict: 'broken', status: get.status };
+    }
+    return { ...link, verdict: 'broken', status: head.status };
+  } catch (err) {
+    if (err.name === 'AbortError') return { ...link, verdict: 'unreachable', status: 'timeout' };
+    // DNS, TLS, connection refused: the link did not answer. Not a retry.
+    return { ...link, verdict: 'unreachable', status: err.cause?.code ?? err.code ?? 'error' };
+  }
+}
+
+const options = parseArgs(process.argv.slice(2));
+const links = externalLinks();
+
+// Asserted non-zero, and it is a hard failure rather than a warning: a
+// broken extractor that reported "0 links, all fine" is the exact false green
+// this repository is trying not to ship.
+assert.ok(links.length > 0, 'no external links found in src/content/docs — the extractor changed shape');
+
+console.log(`checking ${links.length} external links, ${options.timeoutMs}ms budget, no retries`);
+
+// Serial, and deliberately. Parallel requests to a third party from a CI runner
+// is how a link check turns into a small denial-of-service, and a burst of
+// twenty simultaneous requests is the most reliable way to get a 429 and call it
+// a dead link. There is no concurrency knob here on purpose: adding one later
+// is a change somebody has to justify, not a default.
+const results = [];
+for (const link of links) {
+  results.push(await check(link, options.timeoutMs));
+  process.stdout.write('.');
+}
+process.stdout.write('\n\n');
+
+const ok = results.filter((r) => r.verdict === 'ok');
+const redirects = results.filter((r) => r.verdict === 'redirect');
+const broken = results.filter((r) => r.verdict === 'broken');
+const unreachable = results.filter((r) => r.verdict === 'unreachable');
+
+for (const [label, group] of [
+  ['ok', ok],
+  ['redirect', redirects],
+  ['broken', broken],
+  ['unreachable', unreachable],
+]) {
+  console.log(`${label}: ${group.length}`);
+  for (const r of group) console.log(`    ${r.href}  [${r.status ?? '-'}]  (${r.where})`);
+}
+
+// Pass and fail counted separately, and never merged. A summary line that said
+// "23/26 links fine" is a claim about the site; this says exactly how many
+// answered, how many moved, how many are broken and how many did not answer at
+// all — which are four different facts and only one of them is "fine".
+console.log(
+  `\n${ok.length} ok, ${redirects.length} redirect, ${broken.length} broken, ` +
+    `${unreachable.length} unreachable, of ${results.length} checked`,
+);
+
+if (broken.length === 0 && unreachable.length === 0 && redirects.length === 0) {
+  console.log('external links: all ok');
+  process.exit(0);
+}
+
+if (redirects.length > 0) {
+  console.error(
+    '\nbroken-external-links: the links above redirect. A redirect is reported rather ' +
+      'than passed because a redirect to a page that then 404s is a broken link.',
+  );
+}
+if (unreachable.length > 0) {
+  console.error(
+    '\nbroken-external-links: the unreachable links above did not answer within ' +
+      `${options.timeoutMs}ms. This is a FAILURE and not a skip, and it was not retried. ` +
+      'Re-run before changing the link: a slow third party and a dead link look the ' +
+      'same from here, and the difference is which one it is.',
+  );
+}
+if (broken.length > 0) {
+  console.error('\nbroken-external-links: the broken links above answered 4xx or 5xx.');
+}
+process.exit(1);

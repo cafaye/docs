@@ -17,19 +17,36 @@ is not an API reference.
 ## The gate
 
 ```sh
-mise install     # node 22.19.0, pinned in mise.toml
-bin/prime        # npm ci && npm run build && npm test
+mise install          # node 22.19.0, pinned in mise.toml
+bin/prime             # npm ci && npm run build && npm test
+bin/prime --contracts # the above, plus the tier that reads core and caf
 ```
 
-`bin/prime` is the whole test suite; there is no separate lint or typecheck
-step. The build **is** the gate: Starlight validates every page's frontmatter,
+`bin/prime` is the offline suite; there is no separate lint or typecheck step.
+The build **is** half the gate: Starlight validates every page's frontmatter,
 Astro checks every content collection, and Starlight resolves every sidebar slug,
 so a page with a missing `title` or a sidebar entry pointing at nothing fails
-`npm run build`. `tests/smoke.mjs` then asserts the build produced
-`dist/index.html` and every page the sidebar promises — a green build with an
-empty `dist/` is the failure this catches. It reads the sidebar out of
-`astro.config.mjs` rather than hardcoding the page list, so a new entry cannot
-silently escape being checked.
+`npm run build`. The other half is the suite, in four files:
+
+| file | what it asserts |
+| --- | --- |
+| `tests/smoke.mjs` | the build produced `dist/index.html` and every page the sidebar promises, every page is reachable **from** the sidebar, and no built page contains an empty `<svg>` |
+| `tests/links.mjs` | every internal link's **`#fragment` names a heading that exists**, every internal link names a page that was built, every redirect resolves and shadows nothing, and every external href is a well-formed `https:` URL |
+| `tests/examples.mjs` | every ` ```sh ` fence parses under `bash -n`, every ` ```json ` fence is valid JSON, every ` ```yaml ` fence is a manifest, and every `caf` invocation in a fence names a subcommand `caf` actually has |
+| `tests/contracts.mjs` | **the contract tier**, run by `--contracts`: every documented `cafaye.yml` through the real `caf contract lint`, this repository's own manifest too, every event type a page says a service declares against core's catalog, and every span name against core's span-naming schema |
+
+The offline tier needs no network, no sibling checkout and nothing but node and
+bash, on purpose: a gate a contributor cannot run is a gate they stop running.
+The contract tier needs a readable `core` and a `caf` binary, and it **fails
+with a message rather than skipping** when either is missing — a contract check
+that cannot find the contract is worse than no contract check, because it turns
+an unknown into a green badge.
+
+The fragment check is the one that earns its place. It was written against real
+content and went red immediately: `troubleshooting.md` deep-linked to a
+`darkroom` heading in `service-down.md` that is a bolded paragraph, not a
+heading, so no such anchor was ever emitted. Every other check passed, because a
+link to a page that exists is not a working link.
 
 The build is clean: no warnings and no errors. (One Vite notice about a module
 level directive in `index.mdx` is Astro's own MDX asset-propagation pass, not a
@@ -47,7 +64,9 @@ npm run dev      # http://localhost:4321
 | `npm run dev` | Dev server with hot reload |
 | `npm run build` | Build the static site into `dist/` |
 | `npm run preview` | Serve `dist/` locally, as the host will |
-| `npm test` | The smoke test — **run a build first**, it reads `dist/` |
+| `npm test` | The offline suite — **run a build first**, it reads `dist/` |
+| `npm run test:contracts` | The contract tier; needs `CORE_PATH` and a `caf` binary |
+| `bin/check-external-links` | The network tier: do the external links answer |
 
 ## Deploy
 
@@ -83,24 +102,35 @@ it.
 
 ### CI
 
-The gate command is `bin/prime`, and that is what CI should run: build plus the
-smoke test, no secrets, nothing published. **This repository is the only cafaye
-repository with no CI workflow at all** — twelve of the thirteen have a
-`.github/workflows/ci.yml` on `master`.
+The gate command is `bin/prime`, and that is what CI runs: no secrets, nothing
+published. `.github/workflows/ci.yml` has three jobs — `gate` (the gate on the
+pinned interpreter, plus a suite-size guard and a tree-clean guard), `contracts`
+(a checkout of `core` and a `caf` built from source, then `bin/prime
+--contracts`), and `pins` (the configuration claims, no toolchain, so it fails in
+seconds). `.github/workflows/external-links.yml` is the network tier and is a
+**separate file on purpose**: it never runs on a pull request, because a third
+party that will not answer is a red build on a change that did not cause it.
 
-`kit`'s reusable workflow used to sit at `workflows/ci.reusable.yml`, which
-GitHub cannot resolve — reusable workflows are only callable from
-`.github/workflows/` in the owning repository. **It has moved**, and eight
-repositories now call it at `uses: cafaye/kit/.github/workflows/ci.reusable.yml@master`,
-which is correct. Wiring this repository to it is therefore possible now; it was
-not on `docs-03`, and this README said so until now.
+The suite size is held by **equality**: `16 tests, 0 skipped`. A floor would
+accept a suite that lost the link and example checks entirely, which is the
+whole point of having them.
 
-What is still worth saying: a badge is worth only what it ran. Even wired up,
-the interesting part of most of the fleet's suite is a second tier that does not
-run by default. `identity` is the one repository whose CI now refuses to skip
-that tier — it migrates, then fails the build if the database-backed tests drop
-below their floor or anything skips. [Running the
-gates](/running-the-gates/) has the fleet-wide picture.
+**This repository does not call `kit`'s reusable workflow, and the reason is
+measured rather than remembered.** `kit`'s `node` job has no build step, and this
+repository's suite asserts against `dist/` — on a fresh clone, `npm ci && npm
+test` with no build is 3 pass / 4 fail. It also runs `npm run lint`
+unconditionally, and this repository has no linter. `kit`'s `none` job would run
+the gate on the runner's node rather than the pinned 22.19.0. **The cost is that
+this repository receives none of `kit`'s fixes** until someone ports them, and
+the header of `ci.yml` says so in full. The `pins` job asserts the reason stays
+written down, and that any future `uses:` line is the documented
+`cafaye/kit/.github/workflows/ci.reusable.yml@master` — never the
+`workflows/ci.reusable.yml` form, which resolves to nothing.
+
+What is still worth saying: a badge is worth only what it ran. The `contracts`
+job exists because the interesting check here cannot run without a sibling
+checkout, and a job that quietly skipped it would be a green tick over nothing.
+[Running the gates](/running-the-gates/) has the fleet-wide picture.
 
 ## Content
 
@@ -224,8 +254,13 @@ astro.config.mjs          site URL, Starlight config, the sidebar
 src/content.config.ts     Starlight docs collection + an empty i18n collection
 src/content/docs/         every page
 src/pages/404.astro       /404
-tests/smoke.mjs           the whole suite
-bin/prime                 the gate
+tests/smoke.mjs           the build-output half: pages, sidebar coverage both ways, icons
+tests/links.mjs           the link half, offline: fragments, pages, redirects, external shape
+tests/examples.mjs        the examples: sh parses, json is json, caf invocations are real
+tests/contracts.mjs       the contract tier: core's schemas, and the real caf validator
+bin/prime                 the gate (--contracts adds the contract tier)
+bin/check-external-links  the network tier: do the external links answer
+.github/workflows/        ci.yml (gate, contracts, pins) + external-links.yml (network)
 cafaye.yml                the cafaye manifest, so the org tooling finds this repo
 mise.toml                 node 22.19.0
 ```

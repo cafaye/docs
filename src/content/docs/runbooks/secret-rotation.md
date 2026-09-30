@@ -282,8 +282,15 @@ curl -s "$B/healthz"
 curl -s "$B/readyz"
 ```
 
+Liveness, which says nothing about the database:
+
 ```json
 {"status":"ok"}
+```
+
+Readiness, which is the one that has to name it:
+
+```json
 {"status":"ok","deps":"postgres"}
 ```
 

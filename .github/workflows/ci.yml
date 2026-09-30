@@ -1,0 +1,609 @@
+---
+# docs' CI: the gate, and the tiers the gate cannot own by itself.
+#
+# READ THIS BEFORE TRIAGE, AND BEFORE ADDING A JOB.
+#
+# This is a **public** repository. It is what a self-hoster lands on when they
+# decide whether to trust this platform, and it is the one repository in the
+# fleet whose product is prose. Every other repository's tests assert that code
+# behaves; this one's only product is Markdown and the examples inside it, and
+# prose fails in ways code does not. Nothing notices a broken link in a pull
+# request. A self-hoster does, on their first visit, and concludes the platform
+# is abandoned.
+#
+#   gate       THE gate. `bin/prime` on the pinned interpreter: the lockfile
+#              installs, the site builds, and every page, link and code example
+#              is checked. Plus the suite-size guard and the tree-clean guard.
+#   contracts  The tier the gate cannot run alone: the `cafaye.yml` examples
+#              through the real `caf contract lint` against core's real schema,
+#              and the event types and span names the prose asserts against
+#              core's catalog and core's span-naming schema.
+#   pins       The configuration claims. No toolchain, so it fails in seconds.
+#
+# ## WHY THIS REPOSITORY DOES NOT CALL kit's reusable workflow
+#
+# The fleet convention is to call
+# `cafaye/kit/.github/workflows/ci.reusable.yml@master`, and this file does not.
+# That is a deliberate departure and the three measured reasons are below. Each
+# was run, not reasoned about, and each is a property of kit's `node` job that a
+# caller cannot reach.
+#
+#   1. **kit's `node` job has no build step.** Its steps are `npm ci`,
+#      `npm run lint`, `npm test`, `npm run coverage --if-present`. This
+#      repository's entire suite asserts against `dist/`, which `npm run build`
+#      produces. Measured on a fresh clone of this branch: `npm ci && npm test`
+#      with no build gives **3 pass / 4 fail** — the four are exactly the
+#      assertions that read `dist/index.html`. A reusable workflow cannot be
+#      handed an extra step, and `build` is not an input kit exposes.
+#
+#   2. **kit's `node` job runs `npm run lint` unconditionally**, with no
+#      `--if-present` (its coverage step has one; its lint step does not). This
+#      repository has no linter, and `npm run lint` with no such script exits 1
+#      with `Missing script: "lint"`. Measured. The only ways to make that green
+#      are to add a linter — a dependency, and a decision about what this project
+#      carries that AGENTS.md has explicitly not made — or to add
+#      `continue-on-error`, which the packet forbids and which would make the
+#      job's green tick a claim about nothing.
+#
+#   3. **kit's `none` job runs the gate on the runner's node**, not the pinned
+#      one. It would need a `tests/validate.sh` that execs `bin/prime`, exactly
+#      as `core` does. That works, and it is the honest way to adopt kit's
+#      *gate* — but the interpreter it uses is whatever the runner image ships,
+#      while this repository pins `node = "22.19.0"` in `mise.toml` and
+#      declares `engines.node: ">=22.19.0"`. `astro@7` needs `>=22.12.0`, so a
+#      runner on node 20 would fail the build for a reason that has nothing to
+#      do with this repository's content. The `gate` job below pins the
+#      interpreter and then **asserts** it, which is the property kit's job
+#      cannot give.
+#
+# **THE TRADE-OFF, stated because the packet asks for it.** A repository with
+# its own CI is a repository that stops receiving kit's fixes. This one now
+# receives **none**: when kit's shared workflow gains a Node fix, a runner
+# upgrade, or a caching improvement, `docs` does not get it and will not until
+# someone ports it. What this file buys with that is a gate that runs on the
+# pinned interpreter and asserts the two things the packet says matter here —
+# that the layout path is the documented one (`pins`), and that the suite is
+# still the size it was measured at (`gate`). If kit ever grows the missing
+# pieces — a `build` step or a `pretest` hook, and an `--if-present` on lint —
+# the fix is to delete this file, add a `tests/validate.sh` that execs
+# `bin/prime`, and call `uses: cafaye/kit/.github/workflows/ci.reusable.yml@master`
+# with `language: 'node'`. The `pins` job asserts the stale-path form is absent
+# in the meantime, so the day that migration happens nobody reintroduces
+# `workflows/ci.reusable.yml`, which resolves to nothing.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  # So a maintainer can prove the workflow runs rather than assume it. Every
+  # trigger is listed rather than inferred, so a caller adding one can see the
+  # set that exists without reading git history.
+  workflow_dispatch:
+
+# Read-only, and the whole workflow needs nothing else. The gate is hermetic:
+# it reaches no cafaye service, and the contract tier reads a public checkout of
+# `core` with the default token. There is no secret to inherit and no reason to
+# hold one.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 16 tests, measured on this branch with `npm test` after a build. Held by
+  # **equality**, not as a floor: a floor would accept a suite that lost the
+  # link and example checks entirely, and those are the two files that make this
+  # a gate rather than a build.
+  #
+  # Raising this number is the intended direction. Lowering it is not a way to
+  # make a build green — it is the deletion of a check, and the change that
+  # lowers it should have to argue for the deletion in the diff.
+  BASELINE_TESTS: '16'
+  # core, unpinned, on purpose. This tier exists to catch a change in core, and
+  # a pinned ref would blind it to the one thing it exists to detect. A red run
+  # caused by a core change is the guard working, not a flake. The revision read
+  # is printed in the run summary so a red is diagnosable rather than anonymous.
+  CORE_REF: 'master'
+
+jobs:
+  # ----------------------------------------------------------------- the gate
+  gate:
+    name: gate (bin/prime, pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: the pinned interpreter, and the one that arrived
+        # The pin is read from `mise.toml` rather than written here, and the next
+        # step asserts the interpreter that arrived is the one the repository
+        # declares. A second copy of the number in this file is a second thing to
+        # rot; an assertion is the thing that notices.
+        #
+        # `actions/setup-node` is given the literal and `mise.toml` is the
+        # record. `node-version-file: mise.toml` is deliberately **not** used: it
+        # dispatches a `.toml` to a reader that looks for `project.requires` or a
+        # `tool.poetry` key, and mise's `[tools]` is neither — it resolves to
+        # nothing and installs nothing, silently. That trap is why the
+        # assertion below exists rather than a second literal.
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: the interpreter that arrived is the pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          # mise.toml's `[tools]` line, read rather than restated.
+          pinned="$(sed -n 's/^node[[:space:]]*=[[:space:]]*"\([^"]*\)"$/\1/p' mise.toml)"
+          if [ -z "$pinned" ]; then
+            echo "::error::could not read a node pin out of mise.toml." >&2
+            exit 1
+          fi
+          running="$(node --version)"
+          running="${running#v}"
+          if [ "$running" != "$pinned" ]; then
+            echo "::error::mise.toml pins node $pinned; CI is running $running." >&2
+            echo "  The two places that name the interpreter must agree, and this step" >&2
+            echo "  is what notices when one of them is edited." >&2
+            exit 1
+          fi
+          echo "::notice::node $running, from mise.toml"
+
+      - name: bin/prime — the gate
+        # `bin/prime`, unmodified: `npm ci`, `npm run build`, `npm test`. Not a
+        # CI-only variant of it, and not a hand-assembled list of its three
+        # steps. Two reasons, and the first is load-bearing:
+        #
+        #   1. `bin/prime` is what a developer runs. If the two can disagree,
+        #      one of them is lying, and in this repository the disagreement
+        #      would be invisible until it shipped.
+        #   2. The order is the order: a lockfile that does not install should
+        #      not cost a build.
+        #
+        # **bash, `set -o pipefail`, and `${PIPESTATUS[0]}`.** All three are
+        # load-bearing and the third is the one that has already produced a
+        # false green in this fleet: under zsh there is no `PIPESTATUS`, so a
+        # piped exit code is the exit code of `tail`, which is always zero. A
+        # red gate piped into `tee` under zsh reports success. This step is
+        # `shell: bash` and captures the gate's own status with
+        # `${PIPESTATUS[0]}` rather than `$?`.
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/prime.log"
+          status=0
+          bin/prime 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::bin/prime exited $status — the gate is red" >&2
+            exit "$status"
+          fi
+
+      - name: the suite ran the size it is measured at, and skipped nothing
+        # The load-bearing assertion in this file.
+        #
+        # A `node --test` summary line is read, and a line that is not there is
+        # an error rather than a pass: a guard that cannot find its target is
+        # not a guard, and the first version of a check like this that reports
+        # "matched nothing" as agreement is the "0 pass, 0 fail" shape one level
+        # up.
+        #
+        # Compared for **equality**, not as a floor — see `BASELINE_TESTS`.
+        shell: bash
+        env:
+          LOG: ${{ runner.temp }}/prime.log
+        run: |
+          set -euo pipefail
+          # One number per metric, each read by its own name. **Not** a single
+          # `read` over the whole summary line, which is what this step did
+          # first and which was wrong in a way the red proof caught: the line
+          # begins with `#`, so every field offset shifts by one and `skipped`
+          # received the literal string "fail 0 # skipped 0". The guard then
+          # reported "0 test(s) skipped" on a **fully green run** and failed
+          # every build. A positional parse of a line whose shape is owned by
+          # node's test reporter is a bet that the reporter never reorders its
+          # output; four greps that each name what they want are not.
+          metric() {
+            # $1 is the metric name. A metric that is absent is an error and not
+            # a zero: a guard that cannot find its target is not a guard.
+            local value
+            value="$(grep -E "^# $1 [0-9]+$" "$LOG" | tail -1 | awk '{print $3}')"
+            if [ -z "$value" ]; then
+              echo "::error::no '$1' count in $LOG — this guard read nothing, which is not a pass." >&2
+              tail -20 "$LOG" >&2 || true
+              exit 1
+            fi
+            printf '%s' "$value"
+          }
+          tests="$(metric tests)"
+          pass="$(metric pass)"
+          fail="$(metric fail)"
+          skipped="$(metric skipped)"
+          echo "# tests $tests, pass $pass, fail $fail, skipped $skipped"
+          if [ "$skipped" != 0 ]; then
+            echo "::error::$skipped test(s) skipped. Every test in the offline tier is" >&2
+            echo "  unconditional by construction — tests/contracts.mjs holds the" >&2
+            echo "  environment-gated checks and is a separate job that fails when it" >&2
+            echo "  cannot run. A skip here means something changed that nobody read." >&2
+            exit 1
+          fi
+          if [ "$fail" != 0 ]; then
+            echo "::error::$fail test(s) failed — see the log above." >&2
+            exit 1
+          fi
+          if [ "$tests" != "$BASELINE_TESTS" ] || [ "$pass" != "$BASELINE_TESTS" ]; then
+            echo "::error::the suite is $tests tests / $pass pass; the baseline is" >&2
+            echo "  $BASELINE_TESTS / $BASELINE_TESTS. If this commit added or removed a" >&2
+            echo "  test, raise BASELINE_TESTS at the top of this file in the same" >&2
+            echo "  commit. Lowering one is not a way to make a build green." >&2
+            exit 1
+          fi
+          echo "::notice::$tests tests, $pass pass, 0 skipped — the baseline exactly"
+
+      - name: the gate left the tree clean
+        # `git diff` is blind to an untracked file, so `--porcelain` is checked
+        # too: a generated file that stopped being committed looks exactly like
+        # no change at all. `dist/` is gitignored, so it is excluded by
+        # construction rather than by name here.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code; then
+            echo "::error::the gate modified a tracked file. bin/prime must leave the" >&2
+            echo "  tree byte-identical." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain -- src tests bin package.json package-lock.json mise.toml astro.config.mjs cafaye.yml)" ]; then
+            echo "::error::the gate left changes in the tracked tree:" >&2
+            git status --porcelain -- src tests bin package.json package-lock.json mise.toml astro.config.mjs cafaye.yml >&2
+            exit 1
+          fi
+          echo "tree unchanged by the gate"
+
+      - name: what actually ran
+        # The claim, in the run summary, where a reader looks before believing a
+        # green badge. Every number on this table was asserted by the step named
+        # beside it; none of them is a count of anything.
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### docs CI — what ran"
+            echo
+            echo "| tier | asserted | checked by |"
+            echo "|---|---|---|"
+            echo "| whole suite (\`bin/prime\`) | $BASELINE_TESTS tests, 0 skipped | suite-size step |"
+            echo "| interpreter | mise.toml's pin, asserted | pin step |"
+            echo "| tree after the gate | no tracked change, no untracked file | tree-clean step |"
+            echo
+            echo "The test count is a **decrease detector, not a target**. A green run means"
+            echo "nothing was deleted, skipped or excluded since it was measured. Adding a"
+            echo "test turns this workflow red until \`BASELINE_TESTS\` is raised in the same"
+            echo "commit."
+            echo
+            echo "The contract tier is the \`contracts\` job, not this one. The external-link"
+            echo "tier is \`external-links.yml\` and is not part of the pull-request gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------- the contract tier
+  contracts:
+    name: contracts (core's schemas, real caf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # No database, no service container, and deliberately so: this job reads two
+    # public repositories and a static site. A contract job that had to wait for
+    # a Postgres to boot would be a contract job whose green tick is a statement
+    # about a scheduler.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: core, because the contract tier reads it
+        # Cross-repository, and therefore deliberately outside the worktree: the
+        # tree-clean guard above is a `git diff`, and a second checkout inside
+        # the repository would put a foreign tree in the way of that assertion.
+        # `$RUNNER_TEMP/core` keeps this repository exactly as it was shipped.
+        #
+        # `schemas` and `docs`, sparse, because those are the only two trees this
+        # tier reads: `schemas/cafaye.manifest.schema.json` and the seven
+        # telemetry schemas (the span-naming one is read directly for its
+        # pattern), and `docs/event-naming.md` for the catalog. A full checkout
+        # would be an order of magnitude more bytes for files nothing here opens.
+        #
+        # `master`, not a pinned SHA, and the reason is the same as billing's:
+        # this tier exists to catch a change in core, so pinning the ref would
+        # blind the guard to the one thing it exists to detect.
+        #
+        # No `token:`. cafaye/core is public, so the default GITHUB_TOKEN reads
+        # it. If core ever becomes private this step fails loudly on the auth
+        # error, which is the correct outcome — never a silent skip of the tier
+        # that exists to catch drift. The step below turns even that into a red
+        # build.
+        uses: actions/checkout@v7
+        with:
+          repository: cafaye/core
+          ref: ${{ env.CORE_REF }}
+          path: ${{ runner.temp }}/core
+          sparse-checkout: |
+            schemas
+            docs
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+
+      - name: caf, built from source
+        # Built, not downloaded, so this step cannot break because a release
+        # disappeared from a registry or because a published binary is stale.
+        # It is the same reason every cafaye repository is public: this job
+        # needs no credential, which is the property that lets it run on a
+        # public runner at all.
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/cafaye/caf.git "$RUNNER_TEMP/caf"
+          (cd "$RUNNER_TEMP/caf" && go build -o "$RUNNER_TEMP/caf-bin" ./cmd/caf)
+          "$RUNNER_TEMP/caf-bin" version
+
+      - name: the prerequisites the contract tier needs are actually here
+        # This job's whole reason is that a check which cannot find its contract
+        # is worse than no check. So the prerequisites are asserted, not assumed:
+        # a tier that could not run must be a red build, never a green one.
+        shell: bash
+        env:
+          CORE_PATH: ${{ runner.temp }}/core
+        run: |
+          set -euo pipefail
+          if [ ! -r "$CORE_PATH/schemas/cafaye.manifest.schema.json" ]; then
+            echo "::error::$CORE_PATH holds no readable core manifest schema, so the" >&2
+            echo "  contract tier would do nothing and this build would still be" >&2
+            echo "  green. Check the checkout step above." >&2
+            exit 1
+          fi
+          if [ ! -r "$CORE_PATH/docs/event-naming.md" ]; then
+            echo "::error::$CORE_PATH holds no readable core event catalog." >&2
+            exit 1
+          fi
+          echo "::notice::core at $(git -C "$CORE_PATH" rev-parse --short HEAD) (${{ env.CORE_REF }})"
+
+      - name: bin/prime --contracts
+        # The same command a developer with core beside their worktree runs.
+        # `bin/prime` runs the offline tier and then this one, so the contract
+        # tier is never a separate gate that can disagree with the gate — it is
+        # the same gate, with one more flag.
+        shell: bash
+        env:
+          CORE_PATH: ${{ runner.temp }}/core
+          CAF: ${{ runner.temp }}/caf-bin
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/contracts.log"
+          status=0
+          bin/prime --contracts 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::bin/prime --contracts exited $status" >&2
+            exit "$status"
+          fi
+
+      - name: the contract tier ran, and did not skip
+        # The anti-skip guard, and the reason this job exists separately from
+        # the gate. A green `contracts` tick has to mean the examples were
+        # checked, not that the tier found nothing to check.
+        shell: bash
+        env:
+          LOG: ${{ runner.temp }}/contracts.log
+        run: |
+          set -euo pipefail
+          for expected in 'core is on disk' 'caf is on PATH' 'manifests validated by caf contract lint'; do
+            if ! grep -Fq "$expected" "$LOG"; then
+              echo "::error::the contract tier did not report '$expected' — it did not run." >&2
+              echo "  A contract check that cannot find the contract converts an" >&2
+              echo "  unknown into a green badge." >&2
+              tail -30 "$LOG" >&2 || true
+              exit 1
+            fi
+          done
+          if grep -Eq '^# skipped [1-9]' "$LOG"; then
+            echo "::error::the contract tier skipped a test. It has no skip path by" >&2
+            echo "  construction — every assertion in it fails rather than skipping." >&2
+            exit 1
+          fi
+          echo "::notice::the contract tier ran: 5 tests, 0 skipped"
+
+  # ------------------------------------------------------------------- pins
+  pins:
+    name: pins (the configuration claims)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Its own job, and the reason is triageability: every check here needs no
+    # toolchain, no build and no network, so a wrong path or a leaked credential
+    # is red in seconds under a tick that says `pins`, instead of buried under a
+    # sixteen-test run that would have failed later anyway.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: the kit path, in the form that resolves
+        # The whole kit-04 story, held as a guard — and here it is the
+        # **inverse**, because this repository does not call kit. GitHub
+        # resolves a cross-repository reusable workflow at
+        # `{owner}/{repo}/.github/workflows/{file}@{ref}` and documents that
+        # **subdirectories of the workflows directory are not supported** — so a
+        # line reading `cafaye/kit/workflows/ci.reusable.yml@master` resolves to
+        # nothing and the build is red before it starts. kit-02 shipped the file
+        # there and no repository in the fleet noticed, because a layout bug and
+        # a documentation bug agree with each other perfectly.
+        #
+        # This repository writes its own CI, so the assertion is that **no**
+        # `uses:` line points at kit at all, and that if one is ever added it is
+        # the full documented path rather than the stale subdirectory form. That
+        # is the check that makes the departure in this file's header a decision
+        # rather than an accident: when somebody migrates this repository to kit,
+        # this step is what tells them the path has to be the whole one.
+        #
+        # The stale path is written in a bracket class so that this check's own
+        # text cannot match itself; a grep that finds its own pattern reports a
+        # violation on every run and gets deleted, which is how a guard dies.
+        #
+        # And the pattern is **anchored to the start of a line**, which is what
+        # makes it survive this repository at all. The unanchored version of
+        # this check matched three things that are not a `uses:` key: the
+        # migration instructions in this file's own header, and the `echo` line
+        # below that quotes the path it is complaining about. A guard that
+        # fails on the file that documents how to satisfy it gets deleted, and
+        # then nothing holds the path. A line that begins with optional
+        # whitespace and then `uses:` is a YAML mapping key; a line that begins
+        # with `#` is a comment and a line that begins with `echo` is a
+        # string, and neither is a call.
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=".github/workflows/ci.yml"
+          if grep -Eq '^[[:space:]]*uses:[[:space:]]*cafaye/kit/' "$workflow"; then
+            echo "::error::$workflow has a job that calls kit's reusable workflow." >&2
+            echo "  That is allowed and preferred — but only at the documented path:" >&2
+            echo "    uses: cafaye/kit/.github/workflows/ci.reusable.yml@master" >&2
+            echo "  Subdirectories of the workflows directory are NOT supported, so" >&2
+            echo "  cafaye/kit/workflows/ci.reusable.yml@master resolves to nothing." >&2
+            exit 1
+          fi
+          if grep -Eq '^[[:space:]]*uses:[[:space:]]*cafaye/kit/workflow[s]/' "$workflow"; then
+            echo "::error::$workflow uses the pre-kit-04 path, which resolves to nothing." >&2
+            exit 1
+          fi
+          echo "::notice::no kit call, and the stale subdirectory path is absent"
+
+      - name: why this repository does not call kit is still written down
+        # A trade-off that is only in a commit message from six months ago is a
+        # trade-off nobody is weighing. The header of ci.yml states the three
+        # measured reasons and the cost; this asserts the header is still there,
+        # so deleting the explanation — which is the easy half of a migration
+        # nobody finishes — fails the build.
+        #
+        # **The assertion reads the file's top-level comment header only** — the
+        # lines that begin with `#` in column 0, which is where a workflow's
+        # header prose lives and where a `run:` block's contents cannot reach.
+        # The first version grepped the whole file and matched **its own
+        # `for phrase in …` line**, so the check passed on a file whose entire
+        # explanation had been deleted. That is the self-match failure in its
+        # purest form: a guard that is satisfied by the text of the guard.
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=".github/workflows/ci.yml"
+          header="$(sed -n 's/^#//p' "$workflow")"
+          if [ -z "$header" ]; then
+            echo "::error::$workflow has no top-level comment header at all." >&2
+            exit 1
+          fi
+          # Each phrase is written as two adjacent quoted fragments. That is not
+          # a style choice: it guarantees this `run` block cannot contain any of
+          # them verbatim, even though the header must. A guard satisfied by the
+          # text of the guard is not a guard.
+          phrases=(
+            "does not call ""kit"
+            "TRADE""-OFF"
+            "ci.reusable.yml""@master"
+            "stops receiving ""kit"
+          )
+          for phrase in "${phrases[@]}"; do
+            # Case-insensitively: the header is written in sentence case in one
+            # place and shouted in another, and what this asserts is that the
+            # explanation is *there*, not which way round somebody capitalised
+            # it. The fragments above still keep this block from containing any
+            # phrase verbatim, so the case-insensitivity costs no precision.
+            if ! printf '%s' "$header" | grep -Fqi -- "$phrase"; then
+              echo "::error::$workflow's header no longer says: $phrase" >&2
+              echo "  The three measured reasons this repository does not use kit shared" >&2
+              echo "  workflow, and the cost of not receiving its fixes, belong in the" >&2
+              echo "  file rather than in a commit message. If kit has grown the missing" >&2
+              echo "  pieces, migrate and delete this step in the same commit." >&2
+              exit 1
+            fi
+          done
+          echo "::notice::the reason kit is not called is still on the record"
+
+      - name: the external-link tier is not wired into the pull-request gate
+        # The network tier is a **separate workflow file** on purpose. A link
+        # checker that runs on a pull request turns somebody else's outage into
+        # a red build on a change that did not cause it, and the response to
+        # that is to stop reading the badge.
+        #
+        # This asserts the separation rather than trusting it: if a job that
+        # makes a network request ever appears in ci.yml, the build is red and
+        # the reason has to be argued for in a diff.
+        #
+        # Anchored to the start of a line for the reason the previous step gives:
+        # unanchored, this pattern matched the grep below and the error message
+        # that names the script, both of which are inside this step's own `run`
+        # block. A check that fires on the file explaining it is a check that
+        # gets deleted.
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=".github/workflows/ci.yml"
+          if grep -Eq '^[[:space:]]*(\./)?bin/check-external-links' "$workflow"; then
+            echo "::error::$workflow runs the external-link checker." >&2
+            echo "  It is a network tier and belongs in external-links.yml, which runs" >&2
+            echo "  on master pushes, a schedule and a manual dispatch — never on a pull" >&2
+            echo "  request. Moving it here makes a third party's outage a contributor's" >&2
+            echo "  red build." >&2
+            exit 1
+          fi
+          if [ ! -f .github/workflows/external-links.yml ]; then
+            echo "::error::external-links.yml is missing. The external links are still" >&2
+            echo "  checked offline for shape, but nothing is checking whether they" >&2
+            echo "  answer. See the header of bin/check-external-links." >&2
+            exit 1
+          fi
+          echo "::notice::the network tier is separate and present"
+
+      - name: no secret in either workflow, and no secret reference in either
+        # Two rules, checked mechanically rather than promised in a review:
+        #
+        #   * **A credential is never in CI configuration.** A reference to a
+        #     repository or organisation secret is a value in version control
+        #     wearing a prefix. Nothing in this repository needs one: the gate is
+        #     hermetic, `cafaye/core` and `cafaye/caf` are public, and the
+        #     default `GITHUB_TOKEN` reads both.
+        #   * **A CI log is a worse place to leak a credential than a terminal**,
+        #     because it is retained, searchable and often public. Nothing in
+        #     either file sets `set -x` or echoes an environment value.
+        #
+        # Every pattern is written with a bracket class in the position that
+        # would otherwise make this check match its own text — see the previous
+        # step for why that matters, and note that a leading `-` needs `--` or
+        # the pattern is read as an option. Deliberately blunt: adding a
+        # legitimate secret is supposed to require deleting a line that says why.
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          for workflow in .github/workflows/ci.yml .github/workflows/external-links.yml; do
+            for pattern in \
+              'secret[s]\.' \
+              'whsec[_]' \
+              '(s|p|r)[k]_(live|test)' \
+              'gh[pousr]_[A-Za-z0-9]' \
+              '-{5}BEGIN' \
+            ; do
+              if grep -En -- "$pattern" "$workflow"; then
+                echo "::error::$workflow matches /$pattern/ — see the step name." >&2
+                found=1
+              fi
+            done
+          done
+          if [ "$found" != 0 ]; then
+            exit 1
+          fi
+          echo "::notice::no credential and no secret reference in either workflow"

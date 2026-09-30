@@ -19,35 +19,130 @@ The gate is shaped around those, not around code coverage.
 ## The gate
 
 **`bin/prime` must be green before any commit.** It is `npm ci && npm run build
-&& npm test`, and it is the whole test suite — there is nothing else to run.
+&& npm test`, and `npm test` is the whole offline suite. There is nothing else
+to run in the default tier.
 
 ```sh
-mise install     # node 22.19.0, pinned in mise.toml
-bin/prime        # or: mise run prime
+mise install          # node 22.19.0, pinned in mise.toml
+bin/prime             # or: mise run prime
 ```
 
-- `npm run build` **is** the gate. Starlight validates every page's frontmatter,
-  Astro checks every content collection, and Starlight resolves every sidebar
-  slug — so a red build is a real test failure, not a formality.
-- `tests/smoke.mjs` then asserts the things the build does not: that the build
-  produced the pages the sidebar promises, that **every page on disk is reachable
-  from the sidebar**, that **every internal link in the built site resolves**,
-  that **no built page contains an empty `<svg>`**, and that the services
-  directory is not empty. Each of those is a failure mode this repository cannot
-  otherwise detect — a page or a link or an icon that resolves to nothing still
-  builds perfectly green.
+- `npm run build` **is** half the gate. Starlight validates every page's
+  frontmatter, Astro checks every content collection, and Starlight resolves
+  every sidebar slug — so a red build is a real test failure, not a formality.
+- `tests/smoke.mjs` asserts what the build does not: that the build produced the
+  pages the sidebar promises, that **every page on disk is reachable from the
+  sidebar**, that **every internal link in the built site resolves**, that **no
+  built page contains an empty `<svg>`**, and that the services directory is not
+  empty.
+- `tests/links.mjs` asserts the link half the build never touches: that **every
+  `#fragment` names a heading that exists** on the page it points at, that every
+  internal link names a page that was built, that every configured redirect
+  resolves and shadows nothing, and that every external href is a well-formed
+  `https:` URL with a real host and no placeholder. **Offline.** The
+  fragment check is the one that was missing and it is the one that finds real
+  defects — see the history below.
+- `tests/examples.mjs` asserts the code examples: every ` ```sh ` fence parses
+  under `bash -n`, every ` ```json ` fence is valid JSON, every ` ```yaml `
+  fence is a manifest, and every `caf` invocation in a fence names a subcommand
+  the `caf help` output **quoted in `getting-started.md`** lists. That last one
+  reads its vocabulary out of the repository's own prose rather than from a list
+  written beside it, so there is one place that says what `caf` can do.
+- The counts are printed, because a check that reports nothing looks like a
+  check that found nothing: 103 shell fences, 11 JSON fences, 2 manifests, 6
+  `caf` subcommands, 26 external links, 0 redirects.
 
-  Those four were each found by writing the test first and watching it fail on
-  real content, so keep that discipline when adding one: an assertion nobody has
-  seen go red is a report, not a gate.
-- It reads its expectations from `astro.config.mjs` rather than hardcoding a list
-  that would drift. It is deliberately tiny otherwise: it does **not** snapshot
-  HTML, because a content snapshot is a test that fails on every copy edit and
-  gets deleted inside a week.
-- **The suite must be able to fail.** Break a sidebar slug, an internal link, or
-  an icon name and watch it go red before you trust it green.
-- `npm ci`, never `npm install`, in anything scripted. `install` rewrites the
-  lockfile and lets two worktrees disagree about one commit.
+### The contract tier
+
+**`bin/prime --contracts`** (or `mise run prime:contracts`) adds
+`tests/contracts.mjs`, which is the only tier that can catch an example
+contradicting something that has actually shipped:
+
+- every `cafaye.yml` example in the docs goes through the **real
+  `caf contract lint`**, against core's real manifest schema — and so does this
+  repository's own `cafaye.yml`, because `getting-started.md` tells a reader to
+  trust that tool;
+- every event type a page says a service **declares or emits** has a catalog row
+  in core's `event-naming.md`;
+- every span name in `observability.md` obeys core's
+  `schemas/telemetry/span-naming.schema.json` — the recommended ones must match
+  its pattern and the "never" examples must not.
+
+It needs a readable `core` (`CORE_PATH`, or a sibling checkout) and a `caf`
+binary (`CAF`, or on `PATH`). It is a flag and a separate file rather than a
+skip, because **a contract check that cannot find the contract is worse than no
+contract check**: it converts an unknown into a green badge. Both prerequisites
+are asserted, and their absence is a **failure with a message**, never a skipped
+test.
+
+### What a red here means
+
+| Red | What it means | What to do |
+| --- | --- | --- |
+| build | frontmatter or a content collection is wrong | fix the page |
+| a link or a fragment | a page or a heading was renamed and inbound links were not updated | fix the link. **Never** add the slug to an allowlist |
+| a fence | the example is wrong, not the page | fix the example. If the **contract** is wrong, that is a finding for another repository |
+| an event type or a span name | core moved and this site did not | fix the prose, or open a finding against `core` |
+| the suite count | a test was added or removed | raise `BASELINE_TESTS` in `.github/workflows/ci.yml` **in the same commit**. Lowering it is not a way to get to green |
+
+**A red link check is a real failure and not a flaky test to be retried.** There
+are no sleeps and no retries anywhere in this gate, and adding one is how a
+link checker gets made green during the outage it exists to catch.
+
+### Things not to do to get to green
+
+- Do not widen the placeholder substitution list in `tests/examples.mjs` to
+  swallow a broken fence. Add a placeholder there **with a reason**, or write
+  the example so `bash` can parse it. There is a test asserting the list is
+  still the one this repository uses.
+- Do not add a `DRIFT_SECTION` heading to the filter in `tests/contracts.mjs` to
+  stop it flagging a row. That filter is what keeps the drift tables — whose job
+  is to record types core does *not* publish — out of a check about what it does
+  publish.
+- Do not make a check skip. Every test in the offline tier is unconditional by
+  construction, and CI fails the build on a single skip.
+
+## CI
+
+`.github/workflows/ci.yml` has three jobs and **the job names are the claims** —
+a green tick over unnamed steps is a green tick over an unknown amount of work.
+
+| job | what it is |
+|-----|------------|
+| `gate` | THE gate. `bin/prime` on the pinned interpreter, plus the suite-size guard and the tree-clean guard. |
+| `contracts` | The tier the gate cannot run alone: a checkout of `core`, a `caf` built from source, and `bin/prime --contracts`. |
+| `pins` | The configuration claims. No toolchain, no build, no network, so it fails in seconds. |
+
+`.github/workflows/external-links.yml` is the network tier and is **deliberately
+a separate file**: it never runs on a pull request, because a link that will not
+answer is a red build on a contributor's change that did not cause it.
+
+Four things about this CI that are not obvious and that the file argues in full:
+
+- **This repository does not call kit's reusable workflow, and the three reasons
+  are measured, not remembered.** kit's `node` job has no build step and this
+  repository's suite reads `dist/` (`npm ci && npm test` on a fresh clone is 3
+  pass / 4 fail); it runs `npm run lint` unconditionally and this repository has
+  no linter; and kit's `none` job would run the gate on the runner's node rather
+  than the pinned one. The cost is that **this repository receives none of kit's
+  fixes** until someone ports them. The `pins` job asserts the reason is still
+  written down, and that a future `uses:` line is the documented
+  `cafaye/kit/.github/workflows/ci.reusable.yml@master` rather than the stale
+  `workflows/` form that resolves to nothing.
+- **`node --test`'s summary is parsed by name, not by field position.** The
+  first version used one `read` over the whole line; the line begins with `#`, so
+  every offset shifted and the guard reported a skip on a fully green run. Four
+  greps that each name what they want are not a bet on the reporter's field
+  order.
+- **The pipeline is bash and captures the gate's own exit code with
+  `${PIPESTATUS[0]}`.** Under zsh there is no `PIPESTATUS`, so a piped exit code
+  is the exit code of `tail`, which is always zero. That has already produced
+  one false green in this fleet.
+- **The suite size is held by equality, not as a floor.** `16 tests, 0 skipped`
+  is the number measured on this branch. A floor would accept a suite that lost
+  `tests/links.mjs` and `tests/examples.mjs` entirely — which is the whole
+  deliverable of this packet. Adding a test turns CI red until `BASELINE_TESTS`
+  is raised in the same commit, and that is the intended direction.
 
 ## Rules
 
@@ -111,9 +206,21 @@ astro.config.mjs          site URL, Starlight config, the sidebar (a promise abo
 src/content.config.ts     Starlight's docs collection + an empty i18n collection
 src/content/docs/         every page; index.mdx is the splash home
 src/pages/404.astro       /404, owned here rather than injected by Starlight
-tests/smoke.mjs           the whole suite: dist/index.html, every sidebar page,
+tests/smoke.mjs           the build-output half: dist/index.html, every sidebar page,
                           every internal link, every icon, both directions
-bin/prime                 the gate: npm ci, build, smoke test
+tests/links.mjs           the link half, offline: every #fragment resolves, every internal
+                          link resolves, redirects resolve and shadow nothing, every
+                          external href is a well-formed https URL
+tests/examples.mjs        the examples: every sh fence parses, every json fence is JSON,
+                          every yaml fence is a manifest, every caf invocation is a
+                          subcommand caf lists
+tests/contracts.mjs       the contract tier, run by `bin/prime --contracts`: manifests
+                          through the real `caf contract lint`, event types against
+                          core's catalog, span names against core's span-naming schema
+bin/prime                 the gate: npm ci, build, the offline suite. --contracts adds
+                          the contract tier, --fast stops after the install
+bin/check-external-links  the network tier: do the external links answer. No retries
+.github/workflows/        ci.yml (gate, contracts, pins) and external-links.yml (network)
 cafaye.yml                the cafaye manifest, so the org tooling finds this repo
 mise.toml                 node 22.19.0 — covers Astro 7's floor and every transitive engine
 ```
@@ -133,7 +240,11 @@ mise.toml                 node 22.19.0 — covers Astro 7's floor and every tran
 ## Before you commit
 
 - [ ] `bin/prime` is green, and you have pasted the output
+- [ ] `bin/prime --contracts` is green too, if you touched a page with an
+      example, an event type or a span name in it
 - [ ] No new page is missing from the sidebar, and no sidebar entry lacks a page
+- [ ] Every code fence you touched parses, and every `#fragment` you wrote points
+      at a heading that exists
 - [ ] Every command, count and table on the changed pages was **run**, not copied
       from the previous version of the page
 - [ ] Status lines still match what the service repositories actually claim —
@@ -141,8 +252,8 @@ mise.toml                 node 22.19.0 — covers Astro 7's floor and every tran
       audit rather than edited
 - [ ] `README.md` still matches the tree (run commands, deploy steps)
 - [ ] `CHANGELOG.md` has an entry
-- [ ] You did not weaken the gate, loosen an assertion, or add a dependency to
-      get to green
+- [ ] You did not weaken the gate, loosen an assertion, add a skip, or add a
+      dependency to get to green
 
 ## Repo hygiene
 
