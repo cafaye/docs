@@ -174,6 +174,89 @@ test('the services directory is not empty', () => {
   assert.ok(pages.length > 0, 'no service pages found in src/content/docs/services/');
 });
 
+test('every internal link in the built site resolves', () => {
+  // AGENTS.md names a broken link as one of the two ways this repository breaks
+  // quietly: nothing validates an href, Starlight does not rewrite or check
+  // them, and a page can point at a slug that was renamed two commits ago and
+  // still build green. That is a 404 a reader finds, not a red build a reviewer
+  // sees.
+  const pages = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.html')) pages.push(full);
+    }
+  };
+  walk(dist);
+  assert.ok(pages.length > 0, `no HTML under ${dist} — run \`npm run build\` first`);
+
+  // Scanned over dist/ rather than over the Markdown, because that is what a
+  // reader's browser resolves and it also catches links Starlight's components
+  // emit rather than ones an author typed.
+  const source = pages.map((page) => readFileSync(page, 'utf8')).join('\n');
+
+  // Asset references are not links. `<link rel="icon">` and friends point at a
+  // file the browser fetches on its own; nothing in the navigation depends on
+  // them resolving, and treating them as links conflates two failures.
+  //
+  // One is nevertheless outstanding and this assertion says so out loud rather
+  // than absorbing it: Starlight's favicon schema is
+  // `z.string().default('/favicon.svg')` with no way to omit it, and this
+  // repository has no brand asset to put there. Inventing a mark is a brand
+  // decision this repository has explicitly not made (see the `logo:` note in
+  // astro.config.mjs), so the 404 stands, recorded, until that decision is.
+  //
+  // The exception is asserted to be EXACTLY this list rather than filtered by a
+  // pattern, so a second asset 404 fails the suite instead of joining a growing
+  // allowlist nobody reads.
+  const knownMissingAssets = ['/favicon.svg'];
+  const assetRefs = [
+    ...source.matchAll(/<link\b[^>]*rel="[^"]*\bicon\b[^"]*"[^>]*>/g),
+  ]
+    .map((tag) => tag[0].match(/href="([^"]+)"/)?.[1])
+    .filter((href) => href?.startsWith('/'));
+
+  assert.deepEqual(
+    [...new Set(assetRefs)].sort(),
+    knownMissingAssets,
+    'the set of referenced static assets changed. If the favicon now exists, ' +
+      'delete it from knownMissingAssets in this file and from public/. If a new ' +
+      'asset was added and is missing from dist/, ship it or remove the reference.',
+  );
+
+  const hrefs = [...source.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  const internal = [
+    ...new Set(
+      hrefs
+        .filter((h) => h.startsWith('/') && !h.startsWith('//'))
+        .map((h) => h.split('#')[0]),
+    ),
+  ].filter((h) => h !== '' && !knownMissingAssets.includes(h));
+
+  // `trailingSlash: 'ignore'` means either spelling may be served, so accept
+  // either — but not neither. A host that serves /x/ and not /x is its own
+  // decision; a site that ships neither is broken.
+  const resolves = (urlPath) => {
+    const clean = urlPath.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (clean === '') return existsSync(join(dist, 'index.html'));
+    return (
+      existsSync(join(dist, clean, 'index.html')) ||
+      existsSync(join(dist, `${clean}.html`)) ||
+      existsSync(join(dist, clean))
+    );
+  };
+
+  const broken = internal.filter((href) => !resolves(href)).sort();
+
+  assert.deepEqual(
+    broken,
+    [],
+    `internal links with nothing in dist/ behind them: ${broken.join(', ')} — a ` +
+      'renamed or deleted page whose inbound links were not updated',
+  );
+});
+
 test('no built page contains an empty <svg>', () => {
   // An icon name Starlight does not know renders as an empty <svg> — no
   // warning, no build failure, and a card that looks slightly wrong rather than
@@ -205,7 +288,6 @@ test('no built page contains an empty <svg>', () => {
   const offenders = pages
     .filter((page) => empty.test(readFileSync(page, 'utf8')))
     .map((page) => page.slice(dist.length + 1));
-
   assert.deepEqual(
     offenders,
     [],

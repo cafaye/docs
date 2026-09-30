@@ -9,8 +9,10 @@ connected by typed contracts — a versioned `cafaye.yml` manifest, OpenAPI
 documents, and an event envelope — and never by shared code.
 
 This page is the map. [Topology](/architecture/topology/) is the same thing as an
-operator's table: ports, probes, environment variables, and the dependency
-graph. [Contracts](/contracts/) is the specification of the two wire formats.
+operator's table: ports, probes, environment variables, the HTTP surface of each
+service, and the drift audit. [Contracts](/contracts/) is the specification of
+the wire formats, and [Observability](/observability/) is the third of the three
+mechanisms — what a service is allowed to record about what it did.
 
 ## The services, and what each one owns
 
@@ -167,16 +169,41 @@ Stated plainly, because a page that only sells the design is a marketing page.
   and eventually a broker. The [runbooks](/runbooks/) exist because of this.
 - **Contract drift is a real failure mode**, which is why `core` freezes specs,
   every service pins `core:` in its manifest, and `caf contract lint` and
-  `caf contract resolve` exist to gate it.
+  `caf contract resolve` exist to gate it. The current drift is recorded in the
+  [drift audit](/architecture/topology/#cross-repo-drift-audit) rather than
+  smoothed over.
 - **The boundaries are younger than the design.** `guard` routes nothing yet.
-  `parlor`'s manifest is still the pre-`core` draft shape. `darkroom` is an
-  empty repository. Read the status line on every service page before relying
-  on it.
+  `parlor`'s manifest is still the pre-`core` draft shape.
+  `identity` has no MFA. `muse` does not verify the token it is handed.
+  Read the status line on every service page before relying on it.
+
+## Where the observability contract sits
+
+Observability is a third mechanism, alongside HTTP for questions and events for
+facts: **telemetry**, so you can see what happened without asking a service.
+
+`core` owns the contract as **seven JSON schemas** under
+`schemas/telemetry/` — span naming, traces, metrics, logs, redaction, probes, and
+the `<SERVICE>_OTEL_ENDPOINT` contract — and enforces every rule with a test and
+an invalid example. Each service implements it in its own language, by the same
+rule that governs the outbox: core owns the contract, the service ships the
+implementation.
+
+**What is not true today:** no collector is deployed, no Grafana/Loki/Tempo/Mimir
+stack is running, and `muse` is the only service exporting any signal. The
+decision that *is* settled is that it is on by default and exercised in
+development, with bring-your-own-endpoint and a one-variable disable as
+first-class escape hatches. [Observability](/observability/) has the contract and
+the gap.
 
 ## What to read next
 
 - [Topology](/architecture/topology/) — ports, probes, environment variables,
   the dependency graph, and what is not wired yet.
+- [Observability](/observability/) — the telemetry contract, and the gap between
+  it and a running stack.
 - [Contracts](/contracts/) — the manifest, the envelope, OpenAPI.
+- [Upgrading](/upgrading/) — what changed in the contracts, and the order to fix
+  it in.
 - [Services](/services/) — one page per service.
 - [Runbooks](/runbooks/) — how to run the thing.

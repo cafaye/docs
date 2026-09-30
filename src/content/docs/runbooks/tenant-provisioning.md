@@ -195,11 +195,12 @@ HTTP 201
  "expires_at":"2026-10-07T10:51:50.606107+03:00","created_at":"…"}
 ```
 
-**The `token` is in the response body, and `courier` does not send it.** This is
-the step people expect to be automated and is not. `courier` is a v0 scaffold
-with no Swoosh, no provider adapter, and no job queue, so nothing emails this
-token. Deliver it yourself — out of band, to the address you just invited, and
-by a channel you trust.
+**The `token` is in the response body, and `courier` does not deliver it yet.**
+This is the step people expect to be automated and is not. `courier`'s Swoosh
+pipeline and its notification-preference store are built and it publishes
+`courier.email.delivered`, but **no provider adapter is configured**, so nothing
+leaves the process. Deliver the token yourself — out of band, to the address you
+just invited, and by a channel you trust.
 
 `expires_at` is seven days out. An expired invitation is `410`, and a used one
 is `410`; both mean "ask for a new one", and re-posting to `/invitations` is the
@@ -343,10 +344,25 @@ psql "$DATABASE_URL" -c \
 ```
            type           |               subject                | unpublished | attempts
 --------------------------+--------------------------------------+-------------+----------
- identity.member.accepted | 8f80905d-a8d1-470f-aa01-84fc79d81e4b | t           |        0
- identity.account.created | 8f80905d-a8d1-470f-aa01-84fc79d81e4b | t           |        0
- identity.user.created    | d9bfa571-01f5-4701-9cb6-efeece5c782d | t           |        0
+identity.member.accepted | 8f80905d-a8d1-470f-aa01-84fc79d81e4b | t           |        0
+identity.account.created | 8f80905d-a8d1-470f-aa01-84fc79d81e4b | t           |        0
+identity.user.created    | d9bfa571-01f5-4701-9cb6-efeece5c782d | t           |        0
 ```
+
+:::caution[`identity.member.accepted` is not core's spelling]
+Core's catalog row for this fact reads **`identity.member.joined`**, and
+`accepted` is not in core's v0 action vocabulary. `identity` follows the packet it
+was built from and records the divergence rather than resolving it silently, which
+is the right call — but it means this type has **no catalog row and no payload
+schema in core**, and if you build a consumer on it you are building on a name
+core has not agreed to.
+
+The other four tenancy types have the same problem in a milder form: `identity`
+emits `identity.account.created`, `identity.member.invited`,
+`identity.member.role_changed` and `identity.member.removed`, and **declares none
+of them** in its manifest. [Topology](/architecture/topology/#the-drift-the-linter-cannot-see)
+has the full list.
+:::
 
 `unpublished: t` on every row is **expected and not a fault**. No service starts
 a publisher loop; `identity`'s only `Publisher` implementation is a deliberate
@@ -362,8 +378,8 @@ DSN, which is the one convenience of database-per-service worth having.
 
 | Step | Why not | What to do |
 | --- | --- | --- |
-| The invitation email | `courier` is a v0 scaffold with no delivery | Send the token yourself |
-| A billing customer | `billing` never calls Stripe; `processor` and both price ids are null in practice | Create plans and customers through `/v1` once you need them — [billing](/services/billing/) |
+| The invitation email | `courier` has no provider adapter configured | Send the token yourself |
+| A billing customer | `billing` is a separate deployment with its own database | Create plans and customers through `/v1` once you need them — [billing](/services/billing/) |
 | A `guard` role mapping | `guard` verifies tokens; role enforcement is `identity`'s | Nothing. `/v1/*` is bearer-only and `identity` is the authority |
 | Any event delivery | No publisher loop runs | Build the consumer yourself, or read the outbox |
 

@@ -38,6 +38,11 @@ Run **one** replica of `guard` until the session store is shared. This is a know
 limitation recorded in `guard`'s own README, not a misconfiguration: the
 `SessionStore` interface is the seam, and a shared store is a later packet.
 
+**Setting `REDIS_URL` does not fix this.** It shares the *rate-limit counters*
+across replicas and makes them survive a restart; sessions are in process memory
+either way. If you have set `REDIS_URL` and are still seeing this, that is the
+expected result rather than a Redis problem.
+
 If the user reports the loop on a single replica, the next thing to check is
 whether the browser is actually storing the cookie — `__Host-` prefixed cookies
 require HTTPS and `Path=/`, so a plain-HTTP local origin will not keep one.
@@ -110,26 +115,45 @@ if the credential also changed — a `deps: "none"` is a *missing* variable, and
 
 ---
 
-## Uploads fail at 90%
+## Uploads fail at 90%, or a completed upload comes back 409 / 422
 
 ### Check
 
-There is no upload path today. `darkroom` is an **empty repository** — no
-manifest, no Dockerfile, no code, no API.
+```sh
+curl -s "$DARKROOM/readyz"
+# and the two calls that fail:
+#   POST /v1/uploads            -> 201 { upload_url, storage_key, expires_in_secs }
+#   POST /v1/uploads/{id}/complete -> 409 (object absent) or 422 (checksum mismatch)
+```
 
 ### What it usually means
 
-You are looking for a service that does not exist. The intended design is
-**presigned S3 uploads only**, so bytes move straight from the client to object
-storage and never through a service process — but none of it is built.
+**There are three different failures here and they are not one.**
+
+- **Uploads fail immediately** — `darkroom` was not built. **It exists**, with a
+  compose stack, a Dockerfile under `docker/`, and a signed upload flow. If it is
+  not running, the compose stack defaults to `DARKROOM_OBJECT_STORE=memory`,
+  which needs no bucket and no credentials.
+- **`409 object absent` at completion** — the client never actually PUT the
+  bytes, or PUT them to a different key. `complete` **reads the object back**; it
+  does not trust the presign.
+- **`422 checksum mismatch`** — the bytes that arrived are not the bytes that were
+  declared. On **Cloudflare R2** this is the expected place to hit it, because R2
+  does not support `x-amz-checksum-sha256` as `FULL_OBJECT` and rejects ACL
+  headers outright, so `darkroom` verifies by read-back on every backend. The
+  read-back is not a workaround; it is the only path.
+
+**A 1 GiB upload can exhaust memory at completion.** `complete` reads the object
+through `ObjectStore::get`, so the bytes are buffered in the API process while it
+is hashed. That is documented in `darkroom`'s own README as a known cost, not a
+mystery.
 
 ### Do
 
-Nothing on this platform handles uploads yet. Store the bytes in your own
-service, or wait. When `darkroom` lands it will own this, and the
-[R2 support notes](https://developers.cloudflare.com/r2/api/s3/api) matter: R2's
-region is `auto`, its endpoint is account-scoped, and it does not support
-`x-amz-checksum-sha256` as `FULL_OBJECT`.
+Check the readiness first, then the two calls separately. If `complete` is
+failing and the upload call is not, the problem is between the client and the
+bucket, not in the service. See [darkroom](/services/darkroom/) and [a service is
+down](/runbooks/service-down/#darkroom--object-storage-is-a-separate-failure-from-its-database).
 
 ---
 
@@ -158,6 +182,11 @@ nobody.
 side writes no row at all, so "nothing happened" and "it was rejected" look
 identical from outside. See [billing webhooks
 failing](/runbooks/billing-webhooks/).
+
+**Or you are looking at the wrong event name.** `courier`'s types are now
+three-segment — `courier.email.delivered`, not `email.delivered` — so a consumer
+matching the old spelling stops being called with no error at all. [Upgrading](/upgrading/)
+has the order; the one-line check is in that page.
 
 ### Do
 
@@ -209,15 +238,20 @@ curl -s "$IDENTITY/v1/accounts" -H "Authorization: Bearer $THEIR_TOKEN"
 
 ### What it usually means
 
-**The invitation was created but never accepted.** `POST /v1/accounts/{id}/invitations`
-returns a `token` in the body and **nothing emails it** — `courier` is a v0
-scaffold with no delivery. If nobody was sent the token, the membership was never
-created.
+**The invitation was created but never delivered.** `POST /v1/accounts/{id}/invitations`
+returns a `token` in the body, and **nothing emails it** — `courier`'s pipeline is
+built but no provider adapter is configured. If nobody was sent the token, the
+membership was never created.
 
 **Or the `404` is deliberate.** A non-member gets `404`, never `403`, so the
 endpoint is not a tenant-enumeration oracle. A caller who is not a member cannot
 tell "this account does not exist" from "this account is not yours to know
 about" — and a member of the account never gets this `404`.
+
+**Or the `404` is a role problem wearing a membership costume.** A member with a
+role below the route's minimum gets `403`, and only a non-member gets `404` — so
+`404` does narrow it down, but it is still worth asking whether the invitation was
+ever accepted.
 
 ### Do
 
@@ -376,7 +410,7 @@ caf: usage: caf init wants 0 arguments, got 1 (usage: caf init [flags])
 ```
 
 The command that takes a name is `caf new my-saas`. And if the command is one of
-`init`, `new`, `dev`, `deploy`, `gen`, or `mcp`, the usage error is a red
+`init`, `new`, `deploy`, `gen`, or `mcp`, the usage error is a red
 herring — the real answer is that the command is a v0 stub:
 
 ```
@@ -384,8 +418,9 @@ $ caf new my-saas
 caf: caf new: not implemented in v0
 ```
 
-Exit 1, not 2. Only `version`, `doctor`, `contract lint`, and `contract resolve`
-do real work.
+Exit 1, not 2. **`dev` is not one of them** — `caf dev` works, and
+`caf doctor` and `caf dev` both take an *optional* project path. What does real
+work is `version`, `doctor`, `dev`, `contract lint` and `contract resolve`.
 
 ### Do
 
@@ -399,29 +434,70 @@ verified command table, with the two that bite called out.
 ### Check
 
 ```sh
-caf contract lint /path/to/cafaye
+cd cafaye/caf && go run ./cmd/caf contract lint /path/to/cafaye
 ```
 
 ### What it usually means
 
-**Three repositories fail on the current tree, and always have:**
+**One repository fails on the current tree, and always has:**
 
 | Repository | What the linter says |
 | --- | --- |
-| `caf` | `is missing required fields ["language", "core", "repository", "owner"]` |
-| `courier` | `exposes/events/0: "email.queued" does not match "…"` |
 | `parlor` | `is missing required fields ["name", "language", "core", "repository", "owner"]` |
 
-`parlor`'s is the pre-`core` `apiVersion: cafaye/v0-draft` shape. `courier`'s is
-a real disagreement about spelling: two segments (`email.queued`) against a
-schema that requires three (`courier.email.queued`). Specs are manager-owned, so
-the fix is a decision, not a keystroke.
+`parlor`'s is the pre-`core` `apiVersion: cafaye/v0-draft` shape with no `name` at
+the top level. It is documentation of intent.
+
+**This entry used to list three repositories.** `caf`'s manifest gained its
+required fields, and `courier`'s was a real disagreement about spelling — two
+segments (`email.queued`) against a schema that requires three
+(`courier.email.queued`). `courier` caught it itself with this same command and
+corrected its manifest. **If your copy of this page still tells you `courier` is
+red, you are reading a stale build.** The rename changes the `type` on events
+already on the bus; [Upgrading](/upgrading/) is the note.
+
+The drift a linter cannot find — an event a service emits without declaring it, a
+declared event with no schema, a manifest transcribed at a commit that has since
+moved — is in the
+[drift audit](/architecture/topology/#the-drift-the-linter-cannot-see).
 
 ### Do
 
 Lint the specific manifest you changed rather than the whole tree, and treat
-these three as known-red. A linter that is always red gets ignored, which is
-worse than a smaller gate that is honest.
+`parlor` as known-red. A linter that is always red gets ignored, which is worse
+than a smaller gate that is honest.
+
+---
+
+## A suite is green and I do not believe it
+
+### Check
+
+The ignored/skipped count, not the exit code. See [Running the
+gates](/running-the-gates/) for the exact command per repository.
+
+### What it usually means
+
+**A tier did not run.** Each of these is green on a bare machine while proving
+less than it appears to:
+
+| Repository | What did not run | What it needed |
+| --- | --- | --- |
+| `identity` | the integration tests | `TEST_DATABASE_URL` **and a `goose up` first** — without it: `relation "public.oidc_clients" does not exist` |
+| `darkroom` | the `#[ignore]`d database tests, and the `s3` feature entirely | `TEST_DATABASE_URL`; `cargo test` alone does not even compile the feature |
+| `muse` | the two core-parity tests | `MUSE_CORE_SCHEMAS=../core/schemas` |
+| `pantry` | all eight drift tests, and the `../caf` contract lint | `PANTRY_CAFAYE_ROOT` pointing at a workspace |
+| `courier` | nothing, but it needs a database to run at all | Postgres on `localhost:5432` |
+| `kit` | everything, if PyYAML is missing | a virtualenv — the gate exits 1 rather than pretending |
+
+**Or CI never ran at all.** `kit`'s reusable workflow is not callable from GitHub
+yet, and **eight of thirteen repositories have no workflow**, so a green badge on
+those is an absence of evidence.
+
+### Do
+
+Run the tier yourself before you believe the commit. [Running the
+gates](/running-the-gates/) has the command for each.
 
 ---
 
@@ -432,14 +508,20 @@ consequence and did not.
 
 ### What it usually means
 
-**There is no event bus running.** No service starts an outbox publisher loop
-and no broker is deployed. `core` specifies the transactional outbox and NATS as
-the transport; the table and the transactional discipline are implemented, and
-the transport is not.
+**There is no event bus running.** No service starts an outbox publisher loop and
+no broker is deployed. `core` specifies the transactional outbox and NATS as the
+transport; the table and the transactional discipline are implemented in
+`identity`, `billing`, `muse`, `courier` and `darkroom`, and the transport is not.
 
 This also applies to anything you expected to be automatic in
 [provisioning](/runbooks/tenant-provisioning/): the invitation email is not sent,
-because `courier` sends nothing.
+because `courier` has no provider adapter configured.
+
+**One thing that is real and is not this:** `courier`'s **outbound webhooks**. If
+you registered a subscriber at `POST /v1/webhook_endpoints`, `courier` signs and
+delivers to it over HTTP, with a retry budget and a circuit breaker. That is a
+request `courier` makes itself, not an event off a bus — so it works today while
+everything above it does not.
 
 ### Do
 
@@ -470,5 +552,8 @@ same evidence, and both are cheap to act on:
 - [A service is down](/runbooks/service-down/) — the same ground, keyed by
   component.
 - [Runbooks](/runbooks/) — the five procedures.
-- [Topology](/architecture/topology/) — ports, probes, and environment
-  variables.
+- [Topology](/architecture/topology/) — ports, probes, environment variables,
+  and the cross-repo drift audit.
+- [Running the gates](/running-the-gates/) — when the answer is "the suite was
+  green and it did not run the part I needed".
+- [Upgrading](/upgrading/) — when the answer is "I am on the old contracts".

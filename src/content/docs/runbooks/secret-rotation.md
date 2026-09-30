@@ -16,13 +16,21 @@ things that cannot.
 | Secret | Held by | Rotatable today | Method |
 | --- | --- | --- | --- |
 | Stripe **webhook** signing secret | `billing` | **yes, with no downtime** | `STRIPE_WEBHOOK_SECRETS` |
+| Stripe **API** key | `billing` | **yes** | create the new restricted key, deploy it, then revoke the old one |
 | LLM **provider** credential (OpenAI, Anthropic) | `muse` vault | **yes, with no downtime** | re-seal the row |
 | Database password (`DATABASE_URL`) | every service with a database | **yes, via a second role** | `CREATE ROLE` → cut over → `DROP ROLE` |
-| Stripe **API** key | — | n/a | `billing` never calls Stripe. There is no key to hold. |
-| `MUSE_VAULT_KEY` | `muse` | **no** | see [below](#the-vault-key-cannot-be-rotated) |
-| `identity` token signing key | `identity` | **n/a yet** | identity publishes no JWKS; the OIDC provider is not built |
-| Email provider credential | `courier` | **n/a yet** | `courier` is a v0 scaffold with no provider adapter |
+| Object-storage credential (AWS or R2) | `darkroom` | **yes** | the SDK credential chain; put both keys in the environment, cut over, revoke |
+| `identity` OIDC signing key | `identity` | **partially** | see [below](#5-the-identity-oidc-signing-key--configured-not-rotatable) |
+| `MUSE_VAULT_KEY` | `muse` | **no** | see [below](#3-the-muse-vault-key--cannot-be-rotated) |
+| Email provider credential | `courier` | **n/a yet** | the Swoosh pipeline is built; no provider adapter is configured |
 | Session secret | `guard` | **n/a** | sessions are a `Map` in one process, signed by `identity` |
+
+Two of those rows are new and both were previously written as "there is nothing
+to rotate here". `billing` now makes **three kinds of request to Stripe** — create
+a Checkout Session, cancel a subscription, move one between plans — so there is a
+Stripe API key and it is rotatable. And `darkroom` reads its object-storage
+credential from the AWS SDK's own chain, so the rotation is two environment
+variables and a restart.
 
 ## The general rule about how these services read configuration
 
@@ -285,15 +293,22 @@ environment variable, and a symptom that looks nothing like a wrong password.
 
 ---
 
-## 5. The identity token signing key — not built yet
+## 5. The identity OIDC signing key — configured, not rotatable
 
 `guard` verifies bearer tokens against identity's published JWKS at
-`{IDENTITY_ISSUER}/.well-known/jwks.json`, and that mechanism is real. **The
-key set is not**: `identity` has no OIDC provider and publishes no `.well-known`
-endpoint, so there is no signing key to rotate.
+`{IDENTITY_ISSUER}/.well-known/jwks.json`, and that mechanism is real and
+running. **This section used to say the key set did not exist**, which stopped
+being true when the OIDC provider landed.
 
-The rotation procedure that will apply the moment it does exists, and it is
-worth writing down now because two of its properties are non-obvious:
+`OIDC_SIGNING_KEY` is read from the environment and **never generated at boot** —
+a generated key publishes a document no caching verifier has seen, and two
+processes behind a load balancer would each publish a different one. There is
+**one** signing key, and the library's token-encryption key is *derived* from it
+with a domain-separated SHA-256 rather than configured separately. So there is one
+secret to rotate, not two.
+
+**There is still no rotation tooling.** The procedure that applies the moment one
+exists is worth writing down now, because two of its properties are non-obvious:
 
 **Publish the new key before you sign with it.** `guard` holds a fetched key set
 in memory for `IDENTITY_JWKS_TTL_MS` (default `300000` — five minutes). A token
@@ -307,19 +322,24 @@ is the number to plan against: withdrawing a compromised signing key does not
 take effect for up to `IDENTITY_JWKS_TTL_MS`, and the only lever is lowering the
 TTL and paying for more JWKS fetches.
 
-Order, when it lands:
+Order, when the tooling lands:
 
-1. Publish the new public key in identity's JWKS. Old key still published.
-2. Wait longer than `IDENTITY_JWKS_TTL_MS` (5 minutes by default).
-3. Mint tokens with the new key. Both keys verify.
-4. After the longest token lifetime has passed (see below), remove the old public
-   key and lower the TTL if you want the revocation to be immediate.
+1. Put the new key in `OIDC_SIGNING_KEY` and roll. **Old key no longer signs** —
+   this is the step with no overlap, and it is why tooling matters.
+2. Wait longer than `IDENTITY_JWKS_TTL_MS` (5 minutes by default) so every
+   verifier's cache has refreshed.
+3. After the longest token lifetime has passed (see below), the old key is gone
+   from circulation. Lower the TTL if you want revocation to be immediate.
+
+Because step 1 has no overlap, **a rotation today is a cutover, not a
+rotation.** There is no point at which both keys verify, so schedule it.
 
 `guard` enforces **no ceiling on token lifetime** — it verifies `exp` and `nbf`
-and trusts `identity` to mint short-lived ones. `core`'s conventions cap access
-tokens at 15 minutes, and whether the edge enforces that is an open decision. So
-"the longest token lifetime" above is whatever `identity` has been issuing, and
-you should know the number before you need it.
+and trusts `identity` to mint short-lived ones. Access tokens live fifteen
+minutes and **there are no refresh tokens**, so "the longest token lifetime" above
+is bounded at fifteen minutes. That is convenient here and it is also the thing
+that will hurt a long-running session: a browser cannot renew, and there is no
+end-session endpoint either.
 
 ---
 
@@ -327,15 +347,17 @@ you should know the number before you need it.
 
 Do not build a rotation procedure for these; there is nothing to rotate.
 
-- **An email provider credential.** `courier` is a v0 scaffold — no Swoosh, no
-  provider adapter, no job queue, no preference store. It sends nothing.
-- **A Stripe API key.** `billing` receives from Stripe and never calls it. The
-  `processor`, `processor_product_id`, and `processor_price_id` columns are
-  stored and returned, and all three are null in practice.
+- **An email provider credential.** `courier`'s Swoosh pipeline and its
+  notification-preference store are built and it **publishes
+  `courier.email.delivered`**, but no provider adapter is configured — so nothing
+  leaves the process yet. When one is, this is the row that becomes real.
+- **A Stripe API key for a read-only integration.** `billing` now calls Stripe in
+  three ways, so it holds a key — but it is a **restricted** key scoped to the
+  Checkout, subscription and plan operations it uses, and the rotation is
+  Stripe's restricted-key rotation with no overlap window in the cafaye side.
 - **A session secret in `guard`.** Sessions are a `Map` in one process and the
   session id is `identity`'s. Restarting `guard` loses them; there is no key
   material to rotate.
-- **A darkroom object-storage credential.** `darkroom` is an empty repository.
 
 ## What not to do
 
@@ -365,8 +387,10 @@ schedules is a rotation that does not happen:
 | Secret | Cadence | Trigger |
 | --- | --- | --- |
 | Stripe webhook secret | on Stripe's advice, or annually | any suspected disclosure |
+| Stripe API key | on staff change, or annually | any suspected disclosure |
 | LLM provider credentials | 90 days, or on provider notice | provider-side rotation, staff change |
 | Database passwords | 90 days | any suspected disclosure |
+| Object-storage credential | 90 days | any suspected disclosure |
 | `MUSE_VAULT_KEY` | **never** | not rotatable; replace the provider keys instead |
 
 ## See also

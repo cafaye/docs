@@ -25,25 +25,34 @@ guide at all. They are here instead, and every command in them was run against
 the real `caf` binary and the real service repositories:
 
 - [Getting started](/getting-started/) — install `caf`, validate a manifest,
-  run a service against local Postgres, build its image. The whole path, with
-  the six unbuilt commands marked.
+  render and run a local stack, build its image. The whole path, with the five
+  unbuilt commands marked.
+- [Upgrading](/upgrading/) — if you already run a deployment. What breaks in the
+  contracts and the order to fix it in.
 - [Tenant provisioning](/runbooks/tenant-provisioning/) — create an account,
   invite somebody, promote them, and verify it. Quoted from a live session.
-- [Backup and restore](/runbooks/backup-and-restore/) — `pg_dump`, and the
-  restore verification step.
+- [Backup and restore](/runbooks/backup-and-restore/) — `pg_dump`, the bucket
+  `pg_dump` will not save for you, and the restore verification step.
 - [Rotating secrets](/runbooks/secret-rotation/) — Stripe, provider
-  credentials, database passwords, and the two that cannot be rotated.
+  credentials, database passwords, object-storage keys, and the one that cannot
+  be rotated.
 - [A service is down](/runbooks/service-down/) — which service, which kind of
   down, and what not to do.
 - [Billing webhooks failing](/runbooks/billing-webhooks/) — inspect, replay,
   recover, and why a replay is safe.
+- [Running the gates](/running-the-gates/) — the exact command for every
+  repository, and the tiers that skip by default. Read this one before you
+  believe a green badge.
 
 ## In the meantime
 
 - [Contracts](/contracts/) — how the services find each other. The one thing
   worth understanding before anything else.
 - [Architecture](/architecture/) — what each service owns and why.
-- [Topology](/architecture/topology/) — ports, probes, environment variables.
+- [Topology](/architecture/topology/) — ports, probes, environment variables,
+  and the cross-repo drift audit.
+- [Observability](/observability/) — the telemetry contract, and the honest
+  answer to "is the stack running".
 - [Services](/services/) — one page per service, each stating plainly what is
   built and what is not.
 - [the org](https://github.com/cafaye) — for what is landing right now.

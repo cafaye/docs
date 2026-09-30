@@ -54,8 +54,7 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
   `seti:`-prefixed icon is a valid Seti UI name and Starlight 0.42 has no `seti:`
   support at all, so the new Upgrading card shipped an empty element with no
   warning and no build failure. Written first, caught it red, then fixed to a
-  name the icon set actually has.
-- **Every service page rewritten from its repository on `master`.** The status
+  name the icon set actually has.- **Every service page rewritten from its repository on `master`.** The status
   lines were the drift, and a reader who trusted one would have planned around
   a service that does not exist:
   - `darkroom` — was *"Status: not started… the repository exists and is
@@ -101,6 +100,88 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
   `cafaye-rb` is described as what it is — **the shared Ruby gem** (JWKS
   verification, transactional outbox, Rails railtie), not a generated SDK — and
   `pantry` as Rust rather than Go.
+
+### Changed
+
+- **The runbooks now tell you what the gates actually need.** This is the
+  most useful correction in the packet, because a runbook that says "run the
+  gate" without naming the environment is instructing the reader to verify
+  nothing.
+  - `runbooks/index.md` — **object storage is now the second thing to back up**,
+    and `pg_dump` will not save it: `darkroom` hands out presigned writes into a
+    bucket, so a restored database whose bucket is empty has every asset back in
+    the `pending` state it was created in. Also states plainly that **most
+    repositories have no CI**, and that `courier`'s outbound webhooks *are* real
+    even though nothing publishes to a bus.
+  - `runbooks/service-down.md` — **"Rate limits reset and multiply. Also per
+    process"** is gone; the limiter is GCRA and Redis-backed when `REDIS_URL` is
+    set, with `TRUSTED_PROXIES` as the header-trust dial and the socket peer as
+    its default. Added `guard`'s Redis readiness 503 (which is not a request
+    failure), `darkroom`'s object-store failures being separate from its
+    database, `darkroom`'s startup refusals, and the third 8080 collision.
+    Sessions remain per process, and it now says that `REDIS_URL` does **not**
+    fix them.
+  - `runbooks/secret-rotation.md` — the inventory had two rows saying "there is
+    nothing to rotate here", and both were wrong. A **Stripe API key is now
+    real** (billing makes three kinds of request to Stripe) and rotatable, and
+    **`identity`'s OIDC signing key now exists** (`OIDC_SIGNING_KEY`, configured
+    and never generated, with the token-encryption key derived from it). Section
+    5 used to read "**The key set is not**: `identity` has no OIDC provider and
+    publishes no `.well-known` endpoint" — it does both. It also records that a
+    rotation *today* is a cutover rather than a rotation, because there is no
+    overlap window, and that the derived key makes it one secret and not two.
+    Added an object-storage credential row and schedule entry.
+  - `runbooks/tenant-provisioning.md` — **"`courier` is a v0 scaffold with no
+    Swoosh, no provider adapter, and no job queue, so nothing emails this
+    token"** is now "the pipeline is built and no provider adapter is
+    configured". Flags `identity.member.accepted` against core's
+    `identity.member.joined`, and the five tenancy types `identity` emits without
+    declaring.
+  - `runbooks/billing-webhooks.md` — **"There is no API call in `billing` to pull
+    events from Stripe — `billing` receives and never calls"** is gone; it calls
+    in three ways, so there is an API key to rotate alongside the signing secret.
+    Corrects the `subject` rule: a **subscription** event's subject is billing's
+    own `Subscription#id` so the three join on one key, while **payment** events
+    keep the processor's id. Adds the D10 divergence, with the instruction to
+    prefer `GET /v1/subscriptions/{id}` over the payload as the source of truth.
+  - `runbooks/backup-and-restore.md` — the table's **"(no migrations yet)"** for
+    `courier` and **"does not exist"** for `darkroom` are replaced with what is
+    actually in those databases, and `guard` gains a note that with `REDIS_URL`
+    set, **Redis is the thing to back up or accept losing**.
+- `troubleshooting.md` — the **"Uploads fail at 90%"** entry, which answered
+  "there is no upload path today, `darkroom` is an **empty repository**", is
+  rewritten around the three real failures (`409` at completion, `422` checksum,
+  and the 1 GiB memory cost at complete time). The `caf contract lint` entry no
+  longer names `caf` and `courier`. New entry: **"A suite is green and I do not
+  believe it"** — the skipped-tier table, and the fact that eight of thirteen
+  repositories have no CI at all.
+- `architecture/index.md` — **"`darkroom` is an empty repository"** removed from
+  the cost list; observability added as the third mechanism alongside HTTP and
+  events, with the honest note that the contract is shipped and the stack is not.
+- `contracts.md` — the five-part rule for a conformant event type, the fact that
+  a manifest and what a service emits are two different lists (`identity`
+  declares three and writes eight; `courier` declares five and publishes one),
+  and a pointer to the telemetry schemas that `caf contract lint` also reads.
+- `guides/index.md`, `runbooks/index.md` — the walkable-procedures list now
+  includes Upgrading and Running the gates, and says five unbuilt commands rather
+  than six.
+- `tests/smoke.mjs` — a seventh assertion: **every internal link in the built site
+  resolves.** AGENTS.md names a broken link as one of the two ways this
+  repository breaks quietly, and nothing validated an `href`. Written first; it
+  found a real one immediately (below), and it was proved to bite on a deleted
+  page slug before being kept.
+
+### Fixed
+
+- **`/favicon.svg` is a 404 on every page.** Starlight's favicon schema is
+  `z.string().default('/favicon.svg')` with no way to omit it, and this repository
+  has no brand asset. Inventing a mark is a brand decision `astro.config.mjs`
+  explicitly has not made, so the 404 is **recorded rather than fixed**: the link
+  test asserts the set of referenced static assets equals exactly
+  `['/favicon.svg']`, so a second missing asset fails the suite and the entry
+  cannot quietly grow into an allowlist.
+- **An icon that does not resolve shipped as an empty `<svg>`** — caught by the
+  sixth assertion and fixed in the same commit.
 
 ### Added
 
