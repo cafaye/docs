@@ -1,0 +1,70 @@
+---
+title: cafaye
+description: The open-source, multi-language SaaS platform. One CLI, independent services, connected by typed contracts.
+template: splash
+hero:
+  tagline: One CLI, independent services, each written in the language that fits its job.
+---
+
+cafaye exists so you never start a SaaS from scratch again: authentication,
+tenancy, billing, notifications, media, and AI routing — production-grade,
+self-hostable, and connected by typed contracts. It is an **organization, not a
+single repository**: every service below lives in its own repo, versioned and
+installable on its own, so you can scaffold a product with the `caf` CLI, run the
+whole platform with one command, or pick just the services you need.
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Start here" icon="rocket">
+    Install the CLI, scaffold a product, and see what exists today.
+    [Getting started](/getting-started/)
+  </Card>
+  <Card title="The services" icon="setting">
+    One page per service: what it owns, and which language it is written in.
+    [Browse services](/services/)
+  </Card>
+  <Card title="Contracts" icon="open-book">
+    How services find each other: `cafaye.yml`, OpenAPI, and the event envelope.
+    [Read contracts](/contracts/)
+  </Card>
+</CardGrid>
+
+## The services
+
+| Service | What it does | Language |
+| --- | --- | --- |
+| [`identity`](https://github.com/cafaye/identity) | Users, sessions, MFA, OAuth, accounts & tenancy, OIDC provider | Go |
+| [`billing`](https://github.com/cafaye/billing) | Plans, subscriptions, prepaid credits, usage metering, processor webhooks | Ruby |
+| [`courier`](https://github.com/cafaye/courier) | Transactional email, push, and every outbound webhook — signed and retried | Elixir |
+| [`darkroom`](https://github.com/cafaye/darkroom) | Media uploads, variants, S3 pipeline | Rust |
+| [`muse`](https://github.com/cafaye/muse) | LLM routing, credentials vault, token metering | Python |
+| [`guard`](https://github.com/cafaye/guard) | Public gateway / BFF — routing, JWT verification, rate limits | TypeScript |
+| [`parlor`](https://github.com/cafaye/parlor) | The app shell: production-ready frontend template + admin | Next.js |
+
+## The tooling
+
+| Repo | What it does | Language |
+| --- | --- | --- |
+| [`caf`](https://github.com/cafaye/caf) | The CLI: `caf init · new · dev · deploy · gen · contract` | Go |
+| [`core`](https://github.com/cafaye/core) | The substrate: service manifests, OpenAPI & event specs, generator engine | — |
+| [`pantry`](https://github.com/cafaye/pantry) | The registry: publish and install services | Go |
+| [`cafaye-py`](https://github.com/cafaye/cafaye-py) · [`cafaye-ts`](https://github.com/cafaye/cafaye-ts) · [`cafaye-rb`](https://github.com/cafaye/cafaye-rb) | Client SDKs, generated from the contracts | Python / TS / Ruby |
+| [`kit`](https://github.com/cafaye/kit) | Shared CI, lint, and Docker bases for every service repo | — |
+| `docs` | This site | — |
+
+## Why one language per service?
+
+Because services have different jobs. `identity` holds the keys to everything —
+it wants Go's discipline and static binary. `courier` fans out to thousands of
+providers concurrently — that's the BEAM. `darkroom` pushes pixels — no GC
+pauses wanted. `billing` is pure domain modeling — Ruby's home turf. `muse`
+talks to models — Python's ecosystem is unmatched. And `parlor` is the web.
+Polyglot by design, connected by typed contracts, never by shared code.
+
+:::caution[Early development]
+cafaye is **early**. Repos are coming online service by service, starting with
+`identity` and `billing`, and every service page on this site says plainly what
+is built and what is not. Where a command does not exist yet, this site says so
+rather than pretending. Watch [the org](https://github.com/cafaye) for releases.
+:::

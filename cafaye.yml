@@ -1,0 +1,46 @@
+# cafaye.yml — the cafaye project manifest for docs.
+#
+# DRAFT, and the only structural question in it is `language`. The schema is
+# owned by cafaye/core (schemas/cafaye.manifest.schema.json) and its `language`
+# enum is go|ruby|elixir|python|typescript|rust|spec — there is no value for
+# "a static site". `typescript` is chosen because Starlight is an Astro
+# integration and the only JavaScript in this repository is its configuration
+# and one smoke test; `spec` is the alternative, and core uses it for itself.
+#
+# > DECISION NEEDED (docs-01): `language: typescript` for a static docs site.
+# > The `language` enum in core's manifest schema has no value for what this
+# > repository is, so the value here is a judgement, not a fact. Requested:
+# > either a `javascript` value in the enum with an explicit note that a docs
+# > site counts as a JS repo (one line, after which this file is correct as
+# > written), or permission for documentation repos to use `spec` alongside
+# > core. The cost of flipping: an enum addition is a core schema change, and
+# > core is pre-1.0, so it is a minor bump plus one example and one test in
+# > `core` — a manager decision, not this repository's to make. Nothing reads
+# > this value today, so it is safe either way until a tool does.
+#
+# This manifest exists so `caf dev`, `pantry`, and the org tooling can find this
+# repository the way they find any other. It is not read by the build: nothing
+# in npm run build reads cafaye.yml, so a mistake here cannot reach a page.
+name: docs
+description: The cafaye documentation site — docs.cafaye.com. Astro + Starlight, static.
+language: typescript
+core: ^0.2.0
+
+# `exposes` is deliberately absent, and this is NOT a gap in the way it is for
+# billing or guard. Convention rule 3 says a service that serves or receives
+# traffic must declare `exposes`; this repository serves no HTTP traffic of its
+# own — it builds a directory of static files that a host (or CDN) then serves.
+# The same shape a library takes. /404.html is generated output, not an API.
+#
+# There is no `dependencies` entry either: Astro and Starlight are npm
+# packages, and rule 4 says packages belong in the lockfile, not here.
+consumes: []
+
+repository:
+  url: git@github.com:cafaye/docs.git
+  defaultBranch: master
+  visibility: public
+
+owner:
+  team: docs
+  contact: docs@cafaye.com

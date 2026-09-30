@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# astro build output — the deploy artifact, never committed
+dist/
+.astro/
+
+# astro preview / dev caches
+.output/
+
+# local environment overrides (nothing secret is expected here, but never commit one)
+.env
+.env.*
+!.env.example
+
+# os
+.DS_Store
+
+# editors
+.idea/
+.vscode/
+*.swp
