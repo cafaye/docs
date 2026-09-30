@@ -1,0 +1,36 @@
+---
+// src/pages/404.astro — the "page not found" page.
+//
+// WHY THIS IS AN .astro FILE AND NOT src/content/docs/404.md
+//   Starlight injects its own /404 route and reads a docs entry called `404`
+//   for its content. Authoring that page as `docs/404.md` therefore produces
+//   two routes for /404 — the injected one and the catch-all `/[...slug]` — and
+//   Astro warns that one of them cannot be rendered. `disable404Route: true`
+//   in astro.config.mjs turns the injected route off, and this file becomes the
+//   single owner of /404. One route, no warning.
+//
+// The same reasoning keeps this page out of the sidebar: a 404 link in the
+// navigation would be a link that is always a dead end.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+
+Astro.response.headers.set('X-Robots-Tag', 'noindex');
+---
+
+<StarlightPage frontmatter={{ title: 'Page not found' }}>
+  <p>
+    That URL does not exist on docs.cafaye.com. Pages move while cafaye is in
+    early development, and this site is new enough that some pages are still
+    being written.
+  </p>
+  <p>Try one of these instead:</p>
+  <ul>
+    <li><a href="/">Home</a> — what cafaye is, and the services table.</li>
+    <li><a href="/getting-started/">Getting started</a> — the CLI, and what exists today.</li>
+    <li><a href="/services/">Services</a> — one page per service.</li>
+    <li><a href="/contracts/">Contracts</a> — how the services find each other.</li>
+  </ul>
+  <p>
+    If a link on this site sent you here, that is a bug worth reporting in
+    <a href="https://github.com/cafaye/docs/issues">github.com/cafaye/docs</a>.
+  </p>
+</StarlightPage>

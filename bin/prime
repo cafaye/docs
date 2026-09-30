@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# bin/prime — the one command that proves the docs site still builds.
+#
+#   bin/prime          # npm ci, then the build, then the smoke test
+#   bin/prime --fast   # npm ci only
+#
+# WHAT IT PROMISES
+#   Exit 0: the lockfile installs, the site builds, and every page the sidebar
+#   links to exists in dist/. Anything else: nonzero, with the failing step
+#   named. `set -euo pipefail` is the whole mechanism.
+#
+# WHY `npm ci` AND NOT `npm install`
+#   `ci` installs exactly package-lock.json and fails when the lock and the
+#   manifest disagree. `install` would quietly rewrite the lock and let two
+#   worktrees disagree about one commit.
+#
+# WHY THE BUILD IS THE GATE
+#   This repository has no runtime to exercise. Starlight validates every
+#   page's frontmatter and Astro checks every content collection, so a red
+#   build is the real test — tests/smoke.mjs then proves the build produced the
+#   pages the navigation promises.
+
+set -euo pipefail
+
+FAST=0
+for arg in "$@"; do
+  case "$arg" in
+    --fast) FAST=1 ;;
+    -h | --help)
+      sed -n '2,20p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "bin/prime: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+require() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "bin/prime: $1 not found on PATH — run 'mise install' in this worktree" >&2
+    exit 127
+  fi
+}
+
+step() {
+  printf '\n== %s\n' "$1"
+}
+
+version_of() {
+  "$@" --version 2>/dev/null | head -n 1 || true
+}
+
+require node
+require npm
+
+step "npm ci"
+npm ci
+
+if [ "$FAST" -eq 1 ]; then
+  step "skipping build and tests (--fast)"
+  exit 0
+fi
+
+step "npm run build"
+npm run build
+
+step "npm test"
+npm test
+
+version="$(version_of node)"
+step "prime ok (node ${version:-unknown})"
