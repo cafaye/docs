@@ -5,11 +5,14 @@ The cafaye documentation site — **docs.cafaye.com**. A static
 [Starlight](https://starlight.astro.build), built to a directory of HTML with no
 runtime behind it.
 
-**Status: early scaffold.** The structure, the gate, and the deploy path are in
-place. The content is honest about what the platform does and does not do yet —
-every service page carries a status line, and every command that has not shipped
-is marked *Coming soon*. This repository documents an org in early development;
-it is not an API reference.
+**Status: operator documentation for an org in early development.** Two readers:
+a design partner onboarding onto their own infrastructure, and an operator who
+has to keep it alive. The structure, the gate, and the deploy path are in place.
+The content is honest about what the platform does and does not do — every
+service page carries a status line that matches its repository, and every
+command that has not shipped is marked *Coming soon* with the exact message and
+exit code it produces. This repository documents an org in early development; it
+is not an API reference.
 
 ## The gate
 
@@ -96,9 +99,20 @@ Pages are Markdown and MDX in `src/content/docs/`; the file path is the URL.
 ```
 src/content/docs/
 ├── index.mdx                 home — what cafaye is, plus the services table
-├── getting-started.md        the CLI, and what exists today
+├── getting-started.md        the six-step path: doctor → install → init → local → deploy
 ├── contracts.md              cafaye.yml, the event envelope, OpenAPI
-├── guides/index.md           placeholder
+├── troubleshooting.md        keyed by symptom, not by component
+├── architecture/
+│   ├── index.md              what each service owns, and why the boundaries
+│   └── topology.md           ports, probes, env vars, dependency graph
+├── runbooks/
+│   ├── index.md              the five, and the two facts they all assume
+│   ├── tenant-provisioning.md
+│   ├── backup-and-restore.md
+│   ├── secret-rotation.md
+│   ├── service-down.md
+│   └── billing-webhooks.md
+├── guides/index.md           what is walkable today, and where it lives
 └── services/
     ├── index.md              overview + why one language per service
     └── <service>.md          one page per service
@@ -118,6 +132,46 @@ src/content/docs/
 - Contract details are owned by
   [cafaye/core](https://github.com/cafaye/core). This site summarizes and links;
   it does not define.
+
+## The accuracy rule, and how it is enforced
+
+**A documented command that does not exist is the worst thing this site can
+ship.** A service page that says a command does not ship yet is telling the
+truth; one that confidently documents a flag nobody added is worse than an empty
+page, because the reader finds out at 2am.
+
+So every command, flag, endpoint, and environment variable on this site is
+written from one of these, never from a plausible guess:
+
+1. **A source file.** The `caf` subcommands come from
+   `moon/cafaye/caf/internal/cli/*.go`; a flag is documented because the flag
+   set declares it.
+2. **A machine-readable file.** `cafaye.yml`, `Dockerfile`,
+   `docker-compose.yml`, `db/schema.rb`, `openapi/v1.yaml`, `mise.toml`.
+3. **A test.** Where a behaviour is subtle, the integration test is the spec.
+
+The v0 commands that do not work are documented *with the exact message and
+exit code they produce*, which is more useful to a reader than "Coming soon"
+alone: `not implemented in v0` with exit 1 means the command is wired and is a
+stub, and exit 2 with `usage:` means the invocation was wrong. Those two are
+different problems and a reader who is told only "unavailable" cannot tell them
+apart.
+
+### Findings are recorded, not smoothed over
+
+Where a page describes something broken or missing in a cafaye repository, it
+says so on the page an operator will hit, with the error they will see. See
+[Topology](/architecture/topology.md)'s *Manifest drift you may hit* section and
+[Troubleshooting](/troubleshooting.md). The current ones:
+
+- `goose` panics on `identity`'s migrations — two files share version 5 — so the
+  command in that repository's own README does not work.
+- `GET /v1/accounts/{id}/members` returns only each member's `role`; the ids
+  come back empty.
+- `caf contract lint` fails on `caf`, `courier`, and `parlor`.
+
+A docs site that hides a known defect is not being honest, it is being
+useless.
 
 ## Deliberately absent
 

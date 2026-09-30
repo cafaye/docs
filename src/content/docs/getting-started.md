@@ -1,86 +1,490 @@
 ---
 title: Getting Started
-description: Install the caf CLI, scaffold a product, and understand what exists today.
+description: Install the caf CLI, validate a manifest, run a service locally, and deploy it to your own infrastructure.
 ---
+
+This page is the path a design partner walks the first week: get a toolchain,
+install the CLI, prove the contracts are sound, run a service against local
+Postgres, and put that service on your own infrastructure. Every command below
+was run against the real `caf` binary and the real service repositories, and the
+output is quoted where it matters.
 
 ## Status, first
 
-Read this before copying anything: **cafaye is in early development.** The
-repos are coming online service by service, starting with `identity` and
-`billing`. The commands below are the intended shape of the CLI and the
-platform; where a command does not ship yet, it is marked
-<span class="badge caution">Coming soon</span> and there is no workaround to
-follow. Nothing here is a stable API.
+**cafaye is in early development.** Of the ten `caf` subcommands, four do real
+work today — `version`, `doctor`, `contract lint`, `contract resolve`. The other
+six parse their flags, check their argument count, and return
+`not implemented in v0`. That is stated on every step below rather than hidden,
+because a command that silently half-works is worse than one that refuses.
 
-## Install the CLI
+What *is* real: the [contracts](/contracts/) are frozen and validated, the
+services have HTTP surfaces you can call, container images you can build, and a
+local stack you can run. What is not real: `caf dev`, `caf deploy`, `caf gen`,
+and the broker. The [runbooks](/runbooks/) assume you have already got the
+services running on your own infrastructure.
 
-`caf` is the entry point to everything: it scaffolds, runs, and generates.
+## Step 1 — check the toolchain
+
+`caf doctor` is the first command to run, and it is safe anywhere. It resolves
+binaries on `PATH` and never executes them: no subprocess, no container, no
+network.
 
 ```sh
-# Coming soon — `caf` has no published release yet.
-brew install cafaye/tap/caf
+go install github.com/cafaye/caf/cmd/caf@latest
+caf doctor
 ```
 
-Until the tap exists, build it from source — the `caf` repository is
-[github.com/cafaye/caf](https://github.com/cafaye/caf), and it is a Go binary,
-so a `go install` is all there is to it.
+```
+tool            status  found at
+git             ok      /opt/homebrew/bin/git
+docker          ok      /usr/local/bin/docker
+docker compose  ok      /usr/local/bin/docker-compose
+tilt            ok      /Users/kaka/.local/share/mise/shims/tilt
+go              ok      /Users/kaka/.local/share/mise/shims/go
+ruby            ok      /Users/kaka/.local/share/mise/shims/ruby
+elixir          ok      /Users/kaka/.local/share/mise/shims/elixir
+python          ok      /Users/kaka/.local/share/mise/shims/python3
+bun             ok      /Users/kaka/.local/share/mise/shims/bun
+rust            ok      /Users/kaka/.cargo/bin/rustc
+checked 10 tools, 10 ok, 0 missing
+```
+
+It checks ten tools, in that order: `git`, `docker`, `docker compose`, `tilt`,
+`go`, `ruby`, `elixir`, `python` (looked up as `python3` then `python`), `bun`,
+`rust` (`rustc` then `cargo`). `doctor` **always exits 0** — it is a report
+about a machine, not a gate — so a `missing` row is something you read, not a CI
+failure.
+
+You do not need all ten. You need the languages of the services you intend to
+run, plus `git` and `docker`. `identity` alone needs `go`; `parlor` needs `bun`.
+
+:::caution[What the check is not]
+`doctor` proves a binary is on `PATH`. It does not prove the version, that
+Docker is *running* (a stopped Docker Desktop daemon is still on `PATH`), or
+that anything is reachable. Every service repository pins its own toolchain in
+its own `mise.toml`; `mise install` inside that repository is the versioned
+answer, and this page does not repeat those pins.
+:::
+
+## Step 2 — install `caf`
+
+There is no tagged release, so `@latest` resolves to a pseudo-version built
+from `master`. That works today:
+
+```sh
+go install github.com/cafaye/caf/cmd/caf@latest
+caf version
+```
+
+```
+caf 0.0.0-dev (commit unknown)
+```
+
+That version string is not a mistake. The semver and commit are injected at link
+time by the release pipeline; a `go install` from an untagged commit has
+neither, so the binary reports the development identity. When a release lands,
+`caf version` reports the release instead.
+
+To build from a clone instead — which is what you want if you are going to read
+the source:
 
 ```sh
 git clone git@github.com:cafaye/caf.git
 cd caf
-go build -o caf .
+go build ./cmd/caf
 ```
 
-## Scaffold a product
+:::caution[`go build ./cmd/caf`, not `go build -o caf .`]
+The main package is at `cmd/caf`. The repository root holds no Go files, so
+`go build -o caf .` from the root fails with `no Go files in <path>` and exit 1.
+`go build ./cmd/caf` writes `./caf` in the current directory. `go install
+github.com/cafaye/caf/cmd/caf@latest` writes to `$GOBIN` instead.
+:::
 
-`caf init` is the command that creates a new project on top of the platform:
-auth, tenancy, and billing wired to real services, so you are not writing those
-again.
+There is no Homebrew tap and no `caf install` command. `brew install
+cafaye/tap/caf` and `caf install` are both
+<span class="badge caution">Coming soon</span>; neither exists today, and neither
+has a workaround beyond the two commands above.
+
+## Step 3 — read what the CLI can do
 
 ```sh
-# Coming soon.
-caf init my-saas
+caf help
 ```
 
-What `caf init` will do, per the platform's design: read the current `core`
-version, write a project manifest, generate the client SDK for the contracts
-you depend on, and emit a `docker-compose.yml` bringing up the services you
-selected. It will not vendor services into your repository — each one stays an
-independent dependency you upgrade on its own.
+```
+caf - the cafaye platform CLI
 
-## Run the platform locally
+Usage:
+  caf <command> [flags] [arguments]
+  caf help <command>
+
+Commands:
+  contract  validate cafaye manifests and resolve core version constraints
+  deploy    deploy a service or app to the cafaye platform
+  dev       run the local development stack
+  doctor    report which cafaye toolchains this machine has
+  gen       generate code and configuration from cafaye contracts
+  init      create a cafaye.yml manifest for the current project
+  mcp       serve the cafaye tools over the Model Context Protocol
+  new       scaffold a new cafaye service or app
+  version   print the caf version
+  help      show help for a command
+```
+
+`caf help <command>` is the same as `<command> --help`, and it is the authority
+on flags — this page does not restate them, because a flag list copied into
+prose is a flag list that drifts.
+
+| Command | Takes | Works today |
+| --- | --- | --- |
+| `caf version` | — | yes |
+| `caf doctor` | — | yes |
+| `caf contract lint <path>` | 1 argument | yes |
+| `caf contract resolve <constraint> <version>` | 2 arguments | yes |
+| `caf init` | 0 arguments | flags only |
+| `caf new <name>` | 1 argument | flags only |
+| `caf dev <service>` | 1 argument | flags only |
+| `caf deploy <service>` | 1 argument | flags only |
+| `caf gen <target>` | 1 argument | flags only |
+| `caf mcp` | 0 arguments | flags only |
+
+*Flags only* means exactly what it says: the flags parse, the argument count is
+checked, and the command returns `not implemented in v0` with exit code 1.
+
+### Two things that will bite you
+
+**`caf init` takes no positional argument.** It operates on a directory. This
+is the argument-count check firing:
+
+```
+$ caf init my-saas
+caf: usage: caf init wants 0 arguments, got 1 (usage: caf init [flags])
+$ echo $?
+2
+```
+
+The command that takes a name is `caf new`:
+
+```
+$ caf new my-saas
+caf: caf new: not implemented in v0
+$ echo $?
+1
+```
+
+**Flags come before positional arguments.** `caf` uses Go's standard `flag`
+package, so the flags must precede them:
 
 ```sh
-# Coming soon.
-caf dev
+caf deploy --dry-run identity     # works
+caf deploy identity --dry-run     # usage error, exit 2
 ```
 
-`caf dev` reads each service's `cafaye.yml`, brings up the services this project
-declares, and proxies between them so localhost behaves like a deployment.
-Before that exists, the per-service compose stacks are the way to run services
-locally — each service repository ships a `docker-compose.yml` and documents its
-own probes.
+### Exit codes
 
-## Add a service
+These are a contract — scripts branch on them, so they do not change without a
+version bump.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | the command succeeded, or you asked for help |
+| 1 | the command ran and failed |
+| 2 | `caf` was invoked wrongly: unknown command, unknown flag, wrong argument count |
+
+## Step 4 — `caf init` a project
+
+<span class="badge caution">Coming soon</span> — the flags parse, the command
+returns `not implemented in v0`.
+
+```
+$ caf init
+caf: caf init: not implemented in v0
+$ echo $?
+1
+```
+
+`caf init` is the command that will create a `cafaye.yml` for the current
+project. It takes `-dir` (default `.`) and `-force`, and nothing else:
 
 ```sh
-# Coming soon.
-caf new billing          # add a dependency on a platform service
-caf gen sdk              # regenerate SDKs from the contracts
-caf contract test        # validate responses against core's specs
+caf help init
 ```
+
+```
+caf init - create a cafaye.yml manifest for the current project
+
+Usage:
+  caf init [flags]
+
+Flags:
+  -dir string
+        directory to initialize (default ".")
+  -force
+        overwrite an existing cafaye.yml
+```
+
+**Until it ships, write the manifest by hand.** Copy the shape from
+[Contracts](/contracts/), then prove it with the one validator that does work.
+`docs/cafaye.yml` is a complete, schema-valid example you can read in the
+repository.
+
+```sh
+caf contract lint ./cafaye.yml
+```
+
+```
+OK ./cafaye.yml
+```
+
+Point it at a directory and it walks the tree, checking every `cafaye.yml` it
+finds and skipping `.git`, `node_modules`, `deps`, `_build`, and `target`:
+
+```sh
+caf contract lint /path/to/checkouts
+```
+
+```
+OK /path/to/checkouts/billing/cafaye.yml
+INVALID /path/to/checkouts/parlor/cafaye.yml: is missing required fields ["name", "language", "core", "repository", "owner"]
+```
+
+It prints one line per manifest and nothing else, so the output is greppable
+and diffable. **It exits 1 if any manifest is invalid, and also if the path
+holds no manifest at all** — a tree that validated nothing is not a pass:
+
+```
+$ caf contract lint /tmp/empty-dir
+caf: caf contract lint: no cafaye.yml found under /tmp/empty-dir
+```
+
+Validation is two things: the core JSON Schema, vendored into the `caf` binary
+at `internal/contract/schemas/manifest-0.2.json` and pinned by sha256 (`caf`
+never fetches it), plus the three cross-field rules a JSON Schema cannot state —
+a published event type must start with the publisher's own name, a service never
+consumes its own events, and an `exposes` must name an OpenAPI document or an
+event. The schema is checked first; the cross-field rules only run on a document
+that passed it.
+
+### Checking a core version constraint
+
+`caf contract resolve` answers one question — does this service's `core:` range
+admit this `core` release — and is shaped for a CI gate.
+
+```sh
+caf contract resolve '^0.2.0' 0.2.0
+```
+
+```
+yes  ^0.2.0 allows 0.2.0: 0.2.0 is in [0.2.0, 0.3.0)
+```
+
+```sh
+caf contract resolve '^0.1.0' 0.2.0
+```
+
+```
+no   ^0.1.0 allows 0.2.0: 0.2.0 is not in [0.1.0, 0.2.0)
+```
+
+Exit 0 when the version is inside the constraint, 1 when it is not, 2 when
+`caf` cannot read what you typed. The constraint grammar is deliberately tiny:
+`1.2.3` exactly, `^1.2.3` caret, `~1.2.3` tilde, `>=1.2.3` at-or-above. No
+ranges, no `||`, no `x`-ranges. Note the pre-1.0 caret: on a `0.x` service
+`^0.2.0` is `>=0.2.0 <0.3.0`, so a `0.3.0` core is *not* admitted by
+`^0.2.0`.
+
+## Step 5 — run a service locally
+
+<span class="badge caution">Coming soon</span> — `caf dev` parses its flags,
+checks that it got exactly one argument, and returns `not implemented in v0`.
+
+```sh
+caf dev identity       # caf: caf dev: not implemented in v0
+caf dev                # usage: caf dev wants 1 argument, got 0
+```
+
+`caf dev` takes `-service`, `-port`, and `-no-tui`, and its usage line is
+`caf dev [flags] <service>`. It is not a substitute for what follows.
+
+**Each service repository ships its own Compose stack, and that is the supported
+local path today.** `identity` is the shortest example, and the shape is the
+same for the others:
+
+```sh
+git clone git@github.com:cafaye/identity.git
+cd identity
+docker compose up -d
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+```
+{"status":"ok"}
+{"status":"ok","deps":"postgres"}
+```
+
+Without a database `readyz` answers `{"status":"ok","deps":"none"}` — there is
+nothing to check, and saying so beats an empty list that looks identical to a
+healthy dependency check. The `/v1` routes are only registered when
+`DATABASE_URL` is set, so a missing database is a clean `404` rather than a
+pile of `500`s.
+
+To run it without Docker at all — the faster loop while you are changing code:
+
+```sh
+mise install          # reads identity/mise.toml -> the pinned Go
+go run ./cmd/identity # http://localhost:8080
+```
+
+### The other services
+
+| Service | Local stack | Port | What answers |
+| --- | --- | --- | --- |
+| `identity` | `docker compose up -d` | 8080 | `{"status":"ok","deps":"postgres"}` |
+| `billing` | `docker compose up -d` (database only), then `bin/rails server` | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
+| `courier` | `docker compose up --build` | 4000 | `{"status":"ok"}` |
+| `muse` | `docker compose up --build` | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
+| `guard` | `docker compose up -d --build` | 8080 | `{"status":"ok","deps":{…}}` |
+| `parlor` | `bun run dev` | 3000 | `{"status":"ok","deps":"none"}` |
+| `darkroom` | *nothing yet* | — | the repository is empty |
+
+`billing` is the odd one: its Compose file starts **only Postgres**, and the
+application runs on the host. The commands are in that repository's README and
+are not repeated here, because they will be right there when you need them.
+
+Two port collisions to expect on a laptop: `identity` and `guard` both want
+8080, and `identity` and `billing` both want 5432 for Postgres. Compose takes
+the host port from a variable where the repository offers one
+(`POSTGRES_PORT=5433 docker compose up -d`); where it does not, run one service
+at a time.
+
+### Migrations are a step you run, not something that runs itself
+
+Every service applies its schema separately, in its own language, with its own
+tool. None of them migrates on boot — a rolling deploy with two versions live
+would race, and a half-applied migration would take the process down with it.
+
+`identity` uses `goose`, which is a command-line tool rather than a module
+dependency:
+
+```sh
+export DATABASE_URL=postgres://identity:identity@localhost:5432/identity
+goose -dir migrations postgres "$DATABASE_URL" status   # what has been applied
+goose -dir migrations postgres "$DATABASE_URL" up       # apply everything pending
+```
+
+`billing` uses Rails migrations:
+
+```sh
+DATABASE_URL=postgres://billing@localhost:5432 bin/rails db:prepare
+```
+
+`muse` applies plain SQL:
+
+```sh
+psql muse -f migrations/00001_outbox_events.sql
+psql muse -f migrations/00002_vault_secrets.sql
+```
+
+In production, run `up-by-one` (or the equivalent) as a single ordered job
+*before* the new image rolls out, and fail the deploy on a non-zero exit.
+
+## Step 6 — deploy to your own infrastructure
+
+<span class="badge caution">Coming soon</span> — `caf deploy` parses its flags
+and returns `not implemented in v0`.
+
+```sh
+caf deploy identity --dry-run    # caf: caf deploy: not implemented in v0
+```
+
+It takes `-env` (default `staging`), `-dry-run`, and `-yes`, and its usage line
+is `caf deploy [flags] <service>`. There is no hosted cafaye platform to deploy
+to yet, so there is also no remote to authenticate against.
+
+**Today you deploy the same way you deploy any container: build the image from
+the repository's own Dockerfile and run it.** Every service ships a
+multi-stage, non-root Dockerfile, and they are not interchangeable — each pins
+its own base image and runtime.
+
+```sh
+git clone git@github.com:cafaye/identity.git
+cd identity
+docker build -t identity .
+docker run --rm -p 8080:8080 \
+  -e DATABASE_URL='postgres://identity:***@postgres:5432/identity?sslmode=require' \
+  -e LOG_LEVEL=info \
+  identity
+```
+
+The images run as uid 65532 on `gcr.io/distroless/static-debian12:nonroot`, so
+there is no shell in the container. That is deliberate, and it means you cannot
+`docker exec sh` into a running service to debug it: use the probes and the
+logs.
+
+| Service | `docker build` | Runtime port | Base |
+| --- | --- | --- | --- |
+| `identity` | `docker build -t identity .` | 8080 | `gcr.io/distroless/static-debian12:nonroot` |
+| `billing` | `docker build -t billing .` | 80 | `ruby:4.0.1-slim`, entrypoint `/rails/bin/docker-entrypoint` |
+| `courier` | `docker build --build-arg SERVICE_NAME=courier -t courier .` | 4000 | `debian:trixie-20260918-slim` |
+| `muse` | `docker build -t muse .` | 8000 | `python:3.14-slim` |
+| `guard` | `docker build -t guard .` | 8080 | `oven/bun:1.3.12-slim` |
+| `parlor` | `docker build -t parlor .` | 3000 | `node:22-slim` |
+| `darkroom` | — | — | no Dockerfile; the repository is empty |
+
+The order that works, and the order that bites:
+
+1. **Migrate first, as a job.** The service never migrates on boot. A schema
+   the new image needs must exist before the new image starts.
+2. **Roll out.** The probes below decide whether traffic is held back.
+3. **Read `/readyz`, not `/healthz`.** Liveness answers whenever the process can
+   dispatch. Readiness answers 503 while the service cannot do work. Restarting
+   on a readiness failure is how a dependency outage becomes a crash loop.
+
+| Service | Liveness | Readiness |
+| --- | --- | --- |
+| `identity` | `GET /healthz` → always 200 | `GET /readyz` → 200, or 503 with each probe bounded at 2s |
+| `billing` | `GET /healthz` → always 200 | `GET /readyz` → 200, or `503 {"status":"error","checks":{"database":"error"}}` |
+| `courier` | `GET /healthz` → always 200, never touches the database | `GET /readyz` → 503 while the database is unreachable |
+| `muse` | `GET /healthz` → 200, consults nothing | `GET /readyz` → reports the `db` slot |
+| `guard` | `GET /healthz` → always 200 | `GET /readyz` → 200, or 503 if a registered probe is down |
+| `parlor` | `GET /healthz` → 200 | `GET /readyz` → `{"status":"ok","deps":"none"}` |
+
+One warning about `courier`: with a database that has gone away underneath a
+running pool, `/readyz` takes about **4.4 seconds** to answer 503 — the pool's
+queue backpressure, not the query timeout. An orchestrator with a shorter probe
+timeout will time out and read `courier` as not ready, which is the same verdict.
+Set the probe timeout above 5s or you will restart a service that is answering
+correctly.
+
+`guard`'s probes sit on the same port as its API, and it is **not** in the
+table above for `/v1/*` because `guard` routes nothing yet: `/v1/me` proves the
+auth chain and forwards nothing.
+
+### What is not in this path yet
+
+The broker. `core` specifies a transactional outbox and NATS as the transport,
+and `identity` and `billing` both write `outbox_events` correctly — but **no
+service starts a publisher loop**, and `identity`'s only `Publisher`
+implementation is a deliberate no-op that would mark every event published and
+drain the outbox into nowhere. Events land in the table and stay there.
+
+That is not a bug to work around; it is the state of the platform, and it is
+the first thing to know if you are waiting for a downstream reaction that never
+comes. [Troubleshooting](/troubleshooting/) has the entry.
 
 ## What to read next
 
-- [Contracts](/contracts/) — `cafaye.yml`, OpenAPI, and the event
-  envelope. This is how the services find each other, and it is the one thing
-  worth understanding before anything else.
+- [Architecture](/architecture/) — what each service owns, and why the
+  boundaries are where they are.
+- [Topology](/architecture/topology/) — the operator's table: ports, probes,
+  environment variables, and what talks to what.
+- [Contracts](/contracts/) — `cafaye.yml`, the event envelope, OpenAPI. The one
+  thing worth understanding before anything else.
 - [Services](/services/) — one page per service, each stating what is built and
   what is not.
-- [Guides](/guides/) — task-oriented walkthroughs. Empty for now.
-
-## Contributing to the docs
-
-This site lives in [github.com/cafaye/docs](https://github.com/cafaye/docs).
-Every page is Markdown; run `npm run dev` to preview and `bin/prime` to prove
-the build is green before opening a PR.
+- [Runbooks](/runbooks/) — provisioning, backup and restore, secret rotation,
+  a service down, and billing webhooks. Read them before the first incident,
+  not during it.
+- [Troubleshooting](/troubleshooting/) — keyed by symptom.
