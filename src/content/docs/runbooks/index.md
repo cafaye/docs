@@ -17,9 +17,17 @@ A runbook that does not say what not to do gets read as a menu.
 | --- | --- |
 | [Tenant provisioning](/runbooks/tenant-provisioning/) | A new customer's account has to exist, end to end, with somebody in it who can sign in. |
 | [Backup and restore](/runbooks/backup-and-restore/) | You need a database you have actually restored, not a database you have actually backed up. |
-| [Rotating secrets](/runbooks/secret-rotation/) | A signing key, a Stripe secret, a provider credential, or a vault key has to change without downtime. |
+| [Rotating secrets](/runbooks/secret-rotation/) | A signing key, a Stripe secret, a provider credential, or a bucket credential has to change without downtime. |
 | [A service is down](/runbooks/service-down/) | Something is answering 5xx, 503, or nothing at all, and you do not yet know what. |
 | [Billing webhooks failing](/runbooks/billing-webhooks/) | Stripe is delivering and billing is not acting, or billing is answering 4xx/5xx. |
+
+A sixth page sits with these and is the one to read **before** you trust a green
+badge anywhere in the fleet:
+
+- **[Running the gates](/running-the-gates/)** — the exact command for every
+  cafaye repository, and the tiers that do **not** run by default. A gate that
+  skips is green and has proved less than it appears to, and most repositories
+  have no CI at all.
 
 ## What every one of these assumes
 
@@ -32,12 +40,21 @@ and environment variable in one table.
 **The services are stateless; the databases are not.** Every image is a
 multi-stage, non-root build with no volume mounted, so a pod restart loses
 nothing. Every piece of durable state is in a Postgres database, and Postgres is
-the only thing in this platform that a backup runbook has to care about. Object
-storage, when `darkroom` exists, is the second thing; today it does not.
+the only thing in this platform that a backup runbook has to care about.
+**Object storage is the second thing and it now exists** — `darkroom` hands out
+presigned writes into a bucket you choose (S3 or Cloudflare R2), and the bucket is
+**not** covered by `pg_dump`. A restored database whose objects are gone has
+assets pointing at nothing.
 
 **Migrations are a deploy step, not a boot step.** No service migrates on boot.
 Run them as a job before the new image rolls out, and fail the deploy on a
 non-zero exit. A half-applied migration is worse than one that did not run.
+
+**Most repositories have no CI.** `kit`'s reusable workflow shipped but is not
+yet callable from GitHub, and only five of thirteen repositories have a workflow
+of their own. "The gate is green" usually means somebody ran it by hand, that
+day. [Running the gates](/running-the-gates/) has the commands and the tiers
+that skip.
 
 ## Two facts that shape every runbook here
 
@@ -48,13 +65,15 @@ rejected password — is logged and never returned, because an unauthenticated
 `GET /readyz` must not be a way to discover that the database is at `10.0.0.5`.
 **If you are reading a bare 503, the reason is in the service's logs.**
 
-**No service publishes events.** `identity` and `billing` both write
-`outbox_events` correctly, in the same transaction as the domain change, and
-**neither starts a publisher loop.** `identity`'s only `Publisher` implementation
-is a deliberate no-op, because starting it would mark every event published and
-drain the outbox into nowhere. So an event in this platform today is a row, not
-a notification. Any runbook step that would "trigger a downstream reaction" is
-marked, and it does not exist.
+**No service publishes events to a bus.** `identity`, `billing`, `muse`,
+`courier` and `darkroom` all write `outbox_events` correctly, in the same
+transaction as the domain change, and **none of them starts a publisher loop.**
+`identity`'s only `Publisher` implementation is a deliberate no-op, because
+starting it would mark every event published and drain the outbox into nowhere.
+So an event in this platform today is a row, not a notification. Any runbook step
+that would "trigger a downstream reaction" is marked, and it does not exist —
+except that `courier`'s outbound webhooks **are** real, and they are HTTP
+requests `courier` makes itself, not events on a bus.
 
 ## Conventions used here
 

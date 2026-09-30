@@ -158,11 +158,20 @@ You cannot replay from the database, because nothing was stored. Your options:
    confirm the signature verifies before you trust a resend of a real one.
 2. **For events inside the retry window, do nothing** — Stripe is still
    retrying and will succeed once the secret is right.
-3. **For events past the retry window, reconcile by hand.** There is no API
-   call in `billing` to pull events from Stripe — `billing` receives and never
-   calls. Read the event out of the Stripe dashboard and record what happened
-   in your own ledger, and treat the gap as a manual correction rather than
-   pretending it was ingested.
+3. **For events past the retry window, reconcile by hand.** Read the event out of
+   the Stripe dashboard and record what happened in your own ledger, and treat the
+   gap as a manual correction rather than pretending it was ingested.
+
+:::caution[`billing` now calls Stripe as well as receiving from it]
+This section used to say `billing` receives and never calls. It no longer does: a
+subscription is bought through a Checkout Session, cancelled by asking Stripe to
+cancel, and moved between plans by asking Stripe to move it. That means a Stripe
+**API** key exists and it is part of your configuration, alongside the webhook
+signing secret — and **they are rotated differently.** The webhook secret has a
+zero-downtime overlap (`STRIPE_WEBHOOK_SECRETS`); the API key does not, because
+there is only ever one. See [rotating
+secrets](/runbooks/secret-rotation/#the-inventory).
+:::
 
 ## Case 3 — rows exist with `failed:` (parked for a human)
 
@@ -300,16 +309,44 @@ is `ignored: unhandled_event_type`.
 | `checkout.session.completed` (subscription mode) | *nothing, deliberately* |
 | `ping` | *nothing, `ignored: connectivity_check`* |
 
-`subject` is the entity the event is about. **This build has no subscriptions
-table and no cafaye subscription id**, so a subscription or payment event carries
-Stripe's subscription id when the payload has one and Stripe's customer id
-otherwise. If you are correlating these events to a cafaye account, that
-mapping is the missing link, and it is a recorded open decision in `billing`'s
-manifest — not something to guess at from the payload.
+`subject` is the entity the event is about, and **what it is depends on the
+event**, which is the thing a consumer is most likely to get wrong here:
+
+| Event | `subject` |
+| --- | --- |
+| `billing.subscription.started` / `.updated` / `.canceled` | **billing's own `Subscription#id`** — a cafaye id, so all three join on one key with no lookup table |
+| `billing.payment.succeeded` / `.failed` | the processor's id, because an invoice references a subscription rather than being one, and the join key is the processor's subscription id in the payload |
+
+`billing` has a subscriptions table, so a subscription event's subject is a
+cafaye id and the three events correlate on it directly. The payment events keep
+the processor's id, and the payload carries the processor's subscription id you
+need to join them.
+
+:::caution[Do not validate a subscription event's `data` against core's schema yet]
+`billing` emits `subscription_id` as its own id, beside `plan_id`, `account_id`,
+`currency` and `started_at`. **Core's schemas describe the pre-table shape** — the
+processor's `sub_…`, plus required `processor`, `processor_event_id`, `kind` and
+`customer_id`, closed with `additionalProperties: false`. A reader generated from
+either version rejects the real payload.
+
+**Prefer `GET /v1/subscriptions/{id}`**, which has a contract test and an
+OpenAPI document, over the event payload as your source of truth until core's
+schemas move. [Upgrading](/upgrading/#2-billingsubscriptionstarted-no-longer-declares-cafaye-prefixed-ids)
+has the full note.
+:::
 
 Out-of-order delivery is handled: a deletion or an update arriving before its
 creation is accepted, and each event keeps its own event time from the payload's
-`created` rather than the arrival time.
+`created` rather than the arrival time. The mapping is derived from *(did the row
+exist, what was it, what is it now)*, so an `updated` delivery that turns out to
+be a cancellation publishes a cancellation.
+
+**One charge can produce two `payment.succeeded` events.** A one-time Checkout
+payment is not ignored the way a subscription-mode Checkout session is, and the
+invoice it creates settles too. A consumer that counts settled payments has to
+decide whether that is one payment or two — it is a real question about your
+consumer, and `billing` deliberately does not suppress the invoice event, because
+suppressing it is a revenue-path decision.
 
 ## What not to do
 

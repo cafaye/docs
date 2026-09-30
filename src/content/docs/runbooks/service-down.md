@@ -32,27 +32,39 @@ with a cold one, drops in-flight work, and does not touch the actual cause.
 
 ## Step 1 — which service?
 
-Ask the question the caller is asking, from outside:
+Ask the question the caller is asking, from outside. **Note the port collisions
+first**: `identity`, `guard` and `darkroom` all default to 8080, so on a laptop
+the loop below only ever finds one of them. That is why it is written to be
+edited for *your* deployment rather than trusted as a fleet scan.
 
 ```sh
-for p in 8080:identity 3000:billing 4000:courier 8000:muse 8080:guard 3000:parlor; do
+for p in 8080:identity 3000:billing 4000:courier 8000:muse 3000:parlor; do
   port=${p%%:*}; name=${p##*:}
   printf '%-10s ' "$name"
   curl -s -m 5 -o /dev/null -w 'healthz=%{http_code} ' "http://localhost:$port/healthz" 2>/dev/null
   curl -s -m 5 -o /dev/null -w 'readyz=%{http_code}\n'  "http://localhost:$port/readyz" 2>/dev/null \
     || echo " (no answer)"
 done
+
+# the three that share 8080 - probe them one at a time
+for p in 8080:identity 8080:guard 8080:darkroom; do
+  port=${p%%:*}; name=${p##*:}
+  printf '%-10s ' "$name"
+  curl -s -m 5 -o /dev/null -w 'healthz=%{http_code} ' "http://localhost:$port/healthz"
+  curl -s -m 5 -o /dev/null -w 'readyz=%{http_code}\n'  "http://localhost:$port/readyz"
+done
 ```
 
 Then the dependency direction, which is short and worth memorising:
 
 ```
-parlor ──▶ identity
-guard  ──▶ identity        (dials it for /auth/*, fetches its JWKS)
-muse   ──▶ identity, guard  (declared dependencies)
-billing ──▶ Postgres
-courier ──▶ Postgres
-guard  ──▶ nothing         (no database)
+parlor   ──▶ identity
+guard    ──▶ identity        (dials it for /auth/*, fetches its JWKS)
+darkroom ──▶ identity        (JWKS only - verifies locally, no call per request)
+muse     ──▶ identity, guard  (declared dependencies)
+billing  ──▶ Postgres, and out to Stripe
+courier  ──▶ Postgres, and out to subscriber webhooks
+guard    ──▶ nothing         (no database)
 ```
 
 `guard` returning 503 on `/v1/*` almost always means `identity` is unreachable —
@@ -79,11 +91,16 @@ will actually hit:
 
 - `muse` refuses to start without `MUSE_VAULT_KEY`, or with one that is not
   base64 or does not decode to 32 bytes.
-- `guard` refuses to start on a malformed `IDENTITY_JWKS_TTL_MS` (`0` or `soon`).
+- `guard` refuses to start on a malformed `IDENTITY_JWKS_TTL_MS` (`0` or `soon`),
+  or on a malformed `REDIS_URL` (`redis//redis`).
+- `darkroom` refuses to start on an object-store configuration it cannot resolve:
+  a real `DARKROOM_S3_REGION` on an R2 endpoint, or `region=auto` with no
+  `DARKROOM_S3_ENDPOINT`, which would otherwise resolve `s3.amazonaws.com` and
+  put your media in a bucket you did not choose.
 
-**Is it listening on the port you are probing?** `identity` and `guard` both
-default to 8080, and the image listens on what `PORT` says. A container running
-with `PORT=9000` is healthy and unreachable at 8080.
+**Is it listening on the port you are probing?** `identity`, `guard` and
+`darkroom` all default to 8080, and the image listens on what `PORT` says. A
+container running with `PORT=9000` is healthy and unreachable at 8080.
 
 **Did a migration run against it?** No service migrates on boot, so a schema
 mismatch shows up as a runtime error rather than a start-up one. If you just
@@ -170,6 +187,21 @@ Note also that the key set is cached for `IDENTITY_JWKS_TTL_MS` (default
 identity has withdrawn until that cache expires.** During a rotation or a
 withdrawal, allow five minutes before concluding a change had no effect.
 
+### guard — a 503 that names Redis
+
+`guard` treats Redis as a **registered readiness dependency** when `REDIS_URL` is
+set, so `/readyz` reports it by name:
+
+```json
+{"deps":{"identity":"ok","redis":"unavailable"}}
+```
+
+**This is not a request failure.** The connection is opened lazily, and an
+unavailable Redis is a logged-and-reported condition rather than a blanket `429`
+for every caller — failing closed would hand one outage to every request on the
+platform. If you set `REDIS_URL` and the rate limiter looks like it is not
+limiting, check the readiness body before you check the limiter.
+
 ## Step 4 — both probes are 200 and the application is broken
 
 The probes cover liveness and the registered dependencies. They do not cover
@@ -180,13 +212,25 @@ everything, and there are two known cases in this platform.
 replica B has never heard of. The symptom is a login loop: `/auth/login` returns
 `200` with a fresh cookie and `/auth/me` answers 401 on the next request.
 **Run one replica, or treat this as a known limitation** — the `SessionStore`
-interface is the seam and a shared store is a later packet.
+interface is the seam and a shared store is a later packet. Setting `REDIS_URL`
+does **not** fix this; it fixes the counters only.
 
-**Rate limits reset and multiply.** Also per process, and the limiter keys on
-the first `X-Forwarded-For` hop, which the caller chooses. A client can mint a
-fresh allowance per request until an edge proxy overwrites that header. This is
-recorded as a known hole in `guard`'s own README rather than hidden behind a
-default.
+**Rate limits mean different things depending on `REDIS_URL`.** Unset, the
+counters are one process's memory: a client gets its allowance from *each*
+replica, and every restart resets it. Set, they are shared by every replica and
+survive a restart — but the **Redis path is driven in tests by a transcription of
+the Lua script, not by a live `redis-server`**, so a first run against real Redis
+is worth watching.
+
+**The limiter reads `X-Forwarded-For` from the right, if you tell it how many
+proxies to believe.** `TRUSTED_PROXIES=n` means *n* proxies append to the chain,
+and the address is read at that hop counting from the end; everything to the left
+is something the caller wrote. `TRUSTED_PROXIES=0` — the default — believes none
+of the header and keys on the socket peer. **If you are behind a proxy and left
+this at `0`, every caller shares one bucket** and your limit is effectively
+global; if you set it too high, a caller can mint a fresh allowance per request.
+A chain shorter than the trusted run falls back to the socket peer, because a
+bucket that groups too many callers is the direction to be wrong in.
 
 **`muse` returns 401 for a credential it cannot decrypt.** If you rotated
 `MUSE_VAULT_KEY`, every stored provider credential fails to decrypt, and it
@@ -194,10 +238,17 @@ surfaces as a `401` rather than a `500` so it does not read as a wrong upstream
 key. It is a vault-key problem, not a provider problem. See [rotating
 secrets](/runbooks/secret-rotation/).
 
+**`darkroom`'s object storage is a separate failure from its database.** Its
+`/readyz` really runs a query, so a healthy 200 means the database is reachable —
+and says nothing about the bucket. A completion that returns `409 object absent`
+or `422 checksum mismatch` is an object-store problem: check the endpoint, the
+region and the credential, not the service. See [darkroom](/services/darkroom/).
+
 **Nothing reacts to anything.** No service starts an outbox publisher loop, so
-`identity` and `billing` record events and deliver none. If the symptom is "the
-write succeeded and the other service did not notice", that is the platform's
-current state and not an outage. See [architecture](/architecture/#the-write-path-in-full).
+`identity`, `billing`, `muse`, `courier` and `darkroom` all record events and
+deliver none. If the symptom is "the write succeeded and the other service did
+not notice", that is the platform's current state and not an outage. See
+[architecture](/architecture/#the-write-path-in-full).
 
 ## Step 5 — the Postgres version skew trap
 
@@ -216,10 +267,12 @@ readiness and a `role "…" does not exist` from `psql` — and the second messa
 the one that tells you the port is wrong.
 
 **A very common specific case:** the host port bind fails because something else
-holds 5432, and a host-side DSN then silently reaches the *other* Postgres. The
-compose files take `POSTGRES_PORT` where the repository offers it
+holds 5432, and a host-side DSN then silently reaches the *other* Postgres. Four
+of the repositories publish 5432 (`identity`, `billing`, `courier`,
+`darkroom`); `muse` already defaults to 5433. The compose files take
+`POSTGRES_PORT` where the repository offers it
 (`POSTGRES_PORT=5433 docker compose up -d`); where it does not, run one service
-at a time. `muse` already defaults to 5433.
+at a time.
 
 ## What not to do
 
@@ -274,3 +327,5 @@ select count(*) filter (where published_at is null) as unpublished,
 - [Rotating secrets](/runbooks/secret-rotation/) — the crash-on-startup cases.
 - [Topology](/architecture/topology/) — every port, probe, and environment
   variable in one table.
+- [Running the gates](/running-the-gates/) — when the answer is "run the suite
+  before you restart anything".

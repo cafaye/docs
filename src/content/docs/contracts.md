@@ -67,6 +67,29 @@ Delivery is **at-least-once**. Every consumer must be idempotent, and services
 publish through a transactional outbox rather than by calling a broker inside a
 request.
 
+:::caution[An event type is conformant when all five of these exist]
+1. the type in the publisher's `exposes.events`, in the three-segment form
+2. a **catalog row** in core's event-naming document
+3. a **payload schema** at `schemas/events/<service>/<entity>/<action>.schema.json`
+4. a valid **and** a negative example for that schema
+5. a **contract test**: the envelope validates, and so does the payload
+
+A publisher that has done four is not conformant. This is not bookkeeping: a
+payload schema is a promise to *other* services, and a schema that lives in the
+publisher is a contract whose lifetime is that publisher's test suite.
+:::
+
+**A publisher's manifest and what it emits are two different lists, and the gap
+is real.** `identity` declares three event types and writes eight; `courier`
+declares five and publishes one. [Topology](/architecture/topology/#the-drift-the-linter-cannot-see)
+has the current list.
+
+**`core` also owns seven telemetry schemas** — span naming, traces, metrics,
+logs, redaction, probes, and the `<SERVICE>_OTEL_ENDPOINT` contract — which are
+read by `caf contract lint` alongside the event schemas. See
+[Observability](/observability/), and note that the contract is shipped while the
+stack that would receive it is not.
+
 ## OpenAPI
 
 HTTP surfaces are contract-first: each service that serves traffic publishes an
@@ -84,3 +107,7 @@ idempotency keys, `traceparent` propagation — are written down in
   services, not a monolith you must adopt wholesale.
 - **Read `core` for anything binding.** This page is orientation; the schema and
   the convention documents are the contract.
+- **If you already depend on this, read [Upgrading](/upgrading/)** before you
+  pin a version. `courier`'s event types changed shape, and the schema for
+  `billing.subscription.started` is in the middle of a second breaking change
+  that is not finished.

@@ -11,22 +11,24 @@ ever been read is not a procedure.
 
 ## What is worth backing up
 
-**The databases, and nothing else.** Every service is a stateless container: no
-volume is mounted, the connection pool is opened lazily and closed on `SIGTERM`,
-and there is nothing to flush to disk. Restarting or replacing any service loses
-nothing. All durable state is in Postgres.
+**The databases, and now the object storage.** Every service is a stateless
+container: no volume is mounted, the connection pool is opened lazily and closed
+on `SIGTERM`, and there is nothing to flush to disk. Restarting or replacing any
+service loses nothing. All durable state is in Postgres — **except `darkroom`'s
+bytes**, which are in a bucket you choose and which no `pg_dump` will ever
+capture.
 
 | Service | Database | Notable tables |
 | --- | --- | --- |
-| `identity` | one per install | `users`, `accounts`, `account_users`, `account_invitations`, `connected_accounts`, `sessions`, `outbox_events` |
-| `billing` | one per install | `plans`, `customers`, `processor_webhooks`, `idempotency_keys`, `outbox_events` |
-| `courier` | one per install | *(no migrations yet)* |
+| `identity` | one per install | `users`, `accounts`, `account_users`, `account_invitations`, `sessions`, `outbox_events`, and the OIDC tables |
+| `billing` | one per install | `plans`, `customers`, `subscriptions`, `processor_webhooks`, `idempotency_keys`, `outbox_events` |
+| `courier` | one per install | `notification_preferences`, `outbox_events`, Oban's `jobs`, `webhook_endpoints`, `webhook_deliveries` |
+| `darkroom` | one per install | the asset registry and its variants — **not the bytes** |
 | `muse` | one per install | `vault_secrets`, `outbox_events` |
-| `guard` | **none** | sessions and rate-limit counters are in-process |
+| `guard` | **none** | sessions are in-process; rate-limit counters are in-process unless `REDIS_URL` is set, in which case **Redis is the thing to back up or to accept losing** |
 | `parlor` | **none** | — |
-| `darkroom` | — | does not exist; object storage will be the second thing to back up |
 
-Two rows in that table need care.
+Three rows in that table need care.
 
 **`muse.vault_secrets` is the most valuable table in the platform.** It holds
 every LLM provider credential, encrypted with `MUSE_VAULT_KEY`. A dump of it is
@@ -38,6 +40,15 @@ secrets](/runbooks/secret-rotation/).
 told you.** It grows by one row per delivery. Back it up for the same reason you
 would back up a ledger, and do not prune it on a schedule you have not thought
 about.
+
+**`darkroom`'s bucket is outside Postgres entirely.** Its `assets` rows are
+restored by `pg_dump`; the objects they point at are not. A restored `darkroom`
+database whose bucket is empty has every asset in the `pending` state it was
+created in and every `storage_key` pointing at nothing — which fails as
+`409 object absent` on completion and as a broken image everywhere else. The
+bucket is the second thing to back up, and `darkroom` hands out **presigned
+writes only**, so your backup of it is a bucket-level copy rather than anything
+`darkroom` can do for you.
 
 ## Before you write a backup script: `pg_dump` version skew
 

@@ -46,10 +46,16 @@ export default defineConfig({
       // against dist/ by tests/smoke.mjs. Add the page and the entry in the same
       // commit, and never one without the other.
       //
-      // Section order follows the two readers this site has: someone deciding
-      // whether to adopt cafaye (Start here → Architecture → Services), then
-      // someone who already did and now has to keep it running (Runbooks →
-      // Troubleshooting). `services` is the hub both paths point back at.
+      // Section order follows the three readers this site has: someone deciding
+      // whether to adopt cafaye (Start here → Architecture → Services), someone
+      // who already runs it and is moving to the current contracts (Upgrading),
+      // then someone keeping it alive (Runbooks → Troubleshooting). `services`
+      // is the hub the first two point back at.
+      //
+      // `Upgrading` sits before `Architecture` deliberately. It is the page a
+      // self-hoster with a live deployment reaches for first, and burying it
+      // under Runbooks — where a reader looks when something is already broken —
+      // is how a rename lands as a silent gap in somebody's webhook handler.
       sidebar: [
         { label: 'Home', link: '/' },
         {
@@ -57,8 +63,16 @@ export default defineConfig({
           items: [{ slug: 'getting-started' }, { slug: 'contracts' }],
         },
         {
+          label: 'Upgrading',
+          items: [{ slug: 'upgrading' }],
+        },
+        {
           label: 'Architecture',
-          items: [{ slug: 'architecture' }, { slug: 'architecture/topology' }],
+          items: [
+            { slug: 'architecture' },
+            { slug: 'architecture/topology' },
+            { slug: 'observability' },
+          ],
         },
         {
           label: 'Services',
@@ -73,6 +87,7 @@ export default defineConfig({
             { slug: 'runbooks/secret-rotation' },
             { slug: 'runbooks/service-down' },
             { slug: 'runbooks/billing-webhooks' },
+            { slug: 'running-the-gates' },
           ],
         },
         { slug: 'troubleshooting' },

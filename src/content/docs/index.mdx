@@ -27,9 +27,14 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     they are.
     [Architecture](/architecture/)
   </Card>
+  <Card title="Upgrading" icon="up-arrow">
+    Running a deployment and moving to the current contracts? What breaks, and
+    the order to fix it in.
+    [Upgrading](/upgrading/)
+  </Card>
   <Card title="Runbooks" icon="setting">
     Provision a tenant, restore a database, rotate a secret, handle an outage,
-    chase a webhook.
+    chase a webhook — and run any repository's real gate.
     [Runbooks](/runbooks/)
   </Card>
   <Card title="Troubleshooting" icon="warning">
@@ -42,10 +47,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 | Service | What it does | Language |
 | --- | --- | --- |
-| [`identity`](https://github.com/cafaye/identity) | Users, sessions, MFA, OAuth, accounts & tenancy, OIDC provider | Go |
-| [`billing`](https://github.com/cafaye/billing) | Plans, subscriptions, prepaid credits, usage metering, processor webhooks | Ruby |
+| [`identity`](https://github.com/cafaye/identity) | Users, sessions, accounts & tenancy, OIDC provider | Go |
+| [`billing`](https://github.com/cafaye/billing) | Plans, subscriptions, prepaid credits, usage metering, processor webhooks in and out | Ruby |
 | [`courier`](https://github.com/cafaye/courier) | Transactional email, push, and every outbound webhook — signed and retried | Elixir |
-| [`darkroom`](https://github.com/cafaye/darkroom) | Media uploads, variants, S3 pipeline | Rust |
+| [`darkroom`](https://github.com/cafaye/darkroom) | Signed media uploads, variants, S3 and Cloudflare R2 | Rust |
 | [`muse`](https://github.com/cafaye/muse) | LLM routing, credentials vault, token metering | Python |
 | [`guard`](https://github.com/cafaye/guard) | Public gateway / BFF — routing, JWT verification, rate limits | TypeScript |
 | [`parlor`](https://github.com/cafaye/parlor) | The app shell: production-ready frontend template + admin | Next.js |
@@ -55,10 +60,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 | Repo | What it does | Language |
 | --- | --- | --- |
 | [`caf`](https://github.com/cafaye/caf) | The CLI: `caf init · new · dev · deploy · gen · contract` | Go |
-| [`core`](https://github.com/cafaye/core) | The substrate: service manifests, OpenAPI & event specs, generator engine | — |
-| [`pantry`](https://github.com/cafaye/pantry) | The registry: publish and install services | Go |
-| [`cafaye-py`](https://github.com/cafaye/cafaye-py) · [`cafaye-ts`](https://github.com/cafaye/cafaye-ts) · [`cafaye-rb`](https://github.com/cafaye/cafaye-rb) | Client SDKs, generated from the contracts | Python / TS / Ruby |
-| [`kit`](https://github.com/cafaye/kit) | Shared CI, lint, and Docker bases for every service repo | — |
+| [`core`](https://github.com/cafaye/core) | The substrate: service manifests, OpenAPI & event specs, telemetry specs, generator engine | — |
+| [`pantry`](https://github.com/cafaye/pantry) | The registry: what a service is and how to reach it | Rust |
+| [`cafaye-rb`](https://github.com/cafaye/cafaye-rb) | The shared Ruby gem: JWKS token verification, the transactional outbox, a Rails railtie | Ruby |
+| [`kit`](https://github.com/cafaye/kit) | Shared CI workflows, lint configs, Docker bases, OTel templates for six languages | — |
 | `docs` | This site | — |
 
 ## Why one language per service?
@@ -71,11 +76,22 @@ talks to models — Python's ecosystem is unmatched. And `parlor` is the web.
 Polyglot by design, connected by typed contracts, never by shared code.
 
 :::caution[Early development]
-cafaye is **early**. Of the ten `caf` subcommands, four do real work today
-(`version`, `doctor`, `contract lint`, `contract resolve`); the other six parse
-their flags and return `not implemented in v0`. There is no hosted platform, no
-event broker, and `darkroom` is an empty repository. Every service page on this
-site says plainly what is built and what is not, and
+cafaye is **early**, and this site is written to say so rather than around it.
+Of the ten `caf` subcommands, **five** do real work today (`version`, `doctor`,
+`dev`, `contract lint`, `contract resolve`); the other five parse their flags and
+return `not implemented in v0`. There is no hosted platform and **no broker** —
+no service starts an outbox publisher loop, so an event is a row and nothing
+more. Three of the seven services are built past their first milestone
+(`darkroom` ships signed uploads and Cloudflare R2; `courier` ships outbound
+webhooks over the Standard Webhooks spec; `guard` ships Redis-backed rate
+limits), and three have a gap a reader will hit: **`identity` has no MFA**,
+`muse`'s auth does not verify the token it is given, and **`guard` routes
+nothing**. Every service page states plainly what is built and what is not, and
 [Getting started](/getting-started/) runs the whole path end to end with the
 commands that actually exist today.
+
+**Most repositories also have no CI.** `kit`'s reusable workflow shipped but is
+not yet callable from GitHub, so a green gate on eight of the thirteen
+repositories rests on somebody having run the suite by hand. See [Running the
+gates](/running-the-gates/).
 :::
