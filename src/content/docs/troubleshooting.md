@@ -483,16 +483,19 @@ less than it appears to:
 
 | Repository | What did not run | What it needed |
 | --- | --- | --- |
-| `identity` | the integration tests | `TEST_DATABASE_URL` **and a `goose up` first** — without it: `relation "public.oidc_clients" does not exist` |
+| `identity` | the integration tests | `TEST_DATABASE_URL` **and a `goose up` first** — without it: `relation "public.oidc_clients" does not exist`. **Its CI now runs this tier and asserts a floor on it**, so this row is about a local run, not about `identity` |
 | `darkroom` | the `#[ignore]`d database tests, and the `s3` feature entirely | `TEST_DATABASE_URL`; `cargo test` alone does not even compile the feature |
 | `muse` | the two core-parity tests | `MUSE_CORE_SCHEMAS=../core/schemas` |
 | `pantry` | all eight drift tests, and the `../caf` contract lint | `PANTRY_CAFAYE_ROOT` pointing at a workspace |
 | `courier` | nothing, but it needs a database to run at all | Postgres on `localhost:5432` |
 | `kit` | everything, if PyYAML is missing | a virtualenv — the gate exits 1 rather than pretending |
 
-**Or CI never ran at all.** `identity` and `docs` have no workflow on `master`,
-so a green badge on either is an absence of evidence. Everywhere else the badge
-may exist and still be green having skipped the tier above.
+**Or CI never ran at all.** `docs` is the only cafaye repository with no
+workflow on `master`, so a green badge on a `docs` commit is an absence of
+evidence. Everywhere else the badge may exist and still be green having skipped
+the tier above — with one exception now: `identity`'s workflow starts Postgres,
+migrates, and fails the build if the database tier drops below its floor or if
+any test skips.
 
 ### Do
 

@@ -383,12 +383,25 @@ On the current tree, run on 2026-09-30: **every repository valid except one.**
 with no `name` at the top level. It is documentation of intent, and it does not
 validate.
 
-**The manifest *count* moves and the answer does not.** This run reported 38
-manifests: 36 `OK`, 2 `INVALID`. The duplicate is a worker worktree of `parlor`
-sitting beside it, which the walk finds because a worktree is a checkout like
-any other — and worktrees come and go. So the number to quote is *which
-repositories* fail, not *how many manifests*. On the twelve primary checkouts
-the answer is one: `parlor`.
+**The manifest *count* moves and the answer does not.** This run reported 35
+manifests: 30 `OK`, 5 `INVALID`, exit 1. Only one of the five is a defect:
+
+| Invalid manifest | Is it a defect |
+| --- | --- |
+| `parlor/cafaye.yml` | **yes** — the shape above |
+| `parlor-worker-parlor-05/cafaye.yml` | the same file in a worker worktree beside it |
+| `core-worker-core-07/harness/tests/fixtures/nonconforming/cafaye.yml` | **no — it exists to fail.** The directory is named `nonconforming` and the file breaks the name rule on purpose. |
+| `core-worker-core-07/harness/tests/fixtures/nonconforming-conventions/cafaye.yml` | no — it declares another service's event prefix on purpose |
+| `core-worker-core-07/harness/tests/fixtures/unsupported-yaml/cafaye.yml` | no — it declares an unknown key on purpose |
+
+Three of the five are **negative fixtures for `core`'s own conformance tests**,
+and the linter is correctly reporting them as what they are. That is also why
+the raw count is worthless as a health signal: it is a number that moves because
+a worker worktree exists, and because somebody wrote a file whose entire
+purpose is to be rejected. Quote *which repositories* fail, never *how many
+manifests*. Across the twelve primary checkouts that have a manifest — `kit`
+has none, and `caf contract lint kit` exits non-zero saying so — the answer is
+one: `parlor`.
 
 **Two repositories that used to fail here no longer do, and this page said
 otherwise until now.** `caf`'s manifest gained its required fields, and

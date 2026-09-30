@@ -320,6 +320,128 @@ Three claims the site made that are not true, all verified against the real CLI:
 - One Vite notice about a module level directive in `index.mdx` remains: it is
   Astro's own MDX asset-propagation pass, not a problem with the page.
 
+### Added
+
+- **Hosted Pilot Onboarding** (`src/content/docs/pilot.md`) — the path from
+  nothing to a running deployment, for somebody who has already evaluated the
+  platform and is now blocked. Second entry in the sidebar, above **Start
+  here**, because it is read at a different moment by a different person.
+
+  It opens by saying the thing that decides the deal before anything else:
+  **there is no hosted cafaye.** `caf deploy` is a stub, so "hosted pilot" means
+  you run it in your own infrastructure. Then, in order: what you get (seven
+  services, what each owns, what each one will fail you on), **the licence
+  position across all thirteen repositories** — ten state no licence at all,
+  `muse` is AGPL-3.0-only, and the page says in as many words to get the grant
+  in writing before building commercially — what it costs to run, and the four
+  things that leave your infrastructure if you turn them on.
+
+  The prerequisite check is `caf doctor`, and the ten-row toolchain table on the
+  page **is** the `tools` table in `caf/internal/cli/doctor.go`, in that order,
+  because that is where the requirement comes from. Step 3 is `caf contract
+  lint`, whose output is greppable and which exits 1 on an invalid manifest *and*
+  on a path holding none.
+
+  The path itself is eight steps — install, clone `identity` (the only service
+  with no cafaye dependency), lint the manifest, `caf dev --dry-run` then
+  `caf dev`, apply migrations, first request, the two things a default stack
+  does not mount, then tenant provisioning — and **every step carries the failure
+  branch beside it**, because a step that cannot fail is not a step a stuck
+  reader can use.
+
+  Two things the page found by running it rather than reading about it:
+  `caf dev` **does not run migrations and does not publish Postgres on a host
+  port**, so the first request on a fresh stack is a bare 500 whose real reason
+  (`relation "users" does not exist`) is only in the service's logs; and
+  `caf dev` sets no `OIDC_*` or `MFA_*` variable, so `/.well-known/jwks.json`
+  404s and the MFA management routes are unmounted. Both now have a recipe, and
+  `getting-started.md` points at it.
+
+  It closes with **what is not production-ready yet** — every row a fact about
+  current code with where to check it — and a **"what this page does not
+  verify"** section, because the steps that could not be run here are named on
+  the page rather than left for the reader to guess.
+
+- **A design-partner flow** on that page: what a pilot gives back (a real
+  workload, the first breakage within a week, two hours twice, a write-up if
+  they want one), what they get that a public user does not, and how to reach a
+  human — including the four things that **do not** exist yet (a support
+  address, a status page, an uptime record, an SLA).
+
+### Changed
+
+- **The whole path re-run against `identity@master`,** not just drafted. Six
+  claims changed as a result and were corrected rather than kept:
+  - **The session token is 43 characters, not 64.** It is 32 random bytes,
+    base64url, unpadded. A number a reader would have counted.
+  - **`caf contract lint` over the workspace is 35 manifests: 30 `OK`, 5
+    `INVALID`.** Topology's drift audit now tables all five and says which one
+    is a defect: `parlor`. Three of the others are **negative fixtures for
+    `core`'s own conformance tests**, in a worker worktree, that exist to be
+    rejected — which is the concrete reason a raw manifest count is worthless.
+  - **`caf contract lint` prints one line per manifest, not per repository.**
+    `pantry` alone contributes ten, because its registry ships a copy of every
+    service's `cafaye.yml`. The page said "one line per repository" and was
+    wrong.
+  - **`guard` proxies nothing; it does not "route nothing".** It serves
+    `/v1/me` and `/auth/*`. `services/guard.md` already had this right; the
+    summary did not.
+  - **The event-count arithmetic was off by one.** Of the ten types `identity`
+    writes, one has both a catalog row and a payload schema, six have a row and
+    no schema, and **three** have neither — the two `oidc_client` types plus
+    `identity.member.accepted`. The page said "three… and a fourth".
+  - **`go install …@latest` writes to `$(go env GOBIN)`,** which under a version
+    manager is not `$GOPATH/bin` and may not be on `PATH`. `caf: command not
+    found` after a successful install is now a named failure branch on step 1,
+    with the `go env GOBIN` fix.
+
+### Fixed
+
+- **Four pages said `identity` has no CI workflow.** It does. `identity` landed
+  a workflow that calls `kit`'s reusable workflow *and* runs a second `gate` job
+  which starts Postgres, migrates, and fails the build on a pass-count floor
+  (1254 suite, 1166 behind `TEST_DATABASE_URL`), on **zero** `--- SKIP:` lines,
+  and on 23 named security tests missing from the log. Corrected in
+  `running-the-gates.md`, `troubleshooting.md`, `index.mdx`, `runbooks/index.md`
+  and `pilot.md`. The reusable workflow now has **eight** callers
+  (`caf`, `core`, `courier`, `darkroom`, `guard`, `identity`, `muse`, `parlor`)
+  and **one** repository with no workflow at all: `docs`.
+
+- **The contact list on `pilot.md` was missing `guard@cafaye.com` and
+  `cafaye@cafaye.com`,** while claiming to enumerate what each repository
+  declares. It now does, and it names the two repositories — `kit` and
+  `parlor` — that declare no contact at all.
+
+### Notes
+
+- Every command on `pilot.md` was run, against `caf` at `a6dcdc0` and
+  `identity` at `master` (`35c2576`): `go install`, `caf version`,
+  `caf doctor`, `caf contract lint` (single manifest and whole workspace),
+  `caf dev --dry-run`, `caf dev`, the migration loop, `POST /v1/users`,
+  `POST /v1/session`, `GET /v1/me`, the outbox query, and the JWKS, discovery
+  and MFA 404s. The steps that could not be run — Linux, a production
+  deployment, the MFA enrollment walkthrough, `muse`, Stripe — are named on the
+  page itself, not only here.
+- `caf doctor`'s exit code was checked in all three states: with a project, with
+  no project at all, and `--help`. **It exits 0 every time.** It is a report,
+  not a gate, and the page says so.
+- `caf contract lint` exits 1 in all three interesting cases: an invalid
+  manifest, a directory with no manifest, and `kit`, which ships none.
+- The "every service is one stateless container" claim was re-derived from all
+  seven Dockerfiles: all multi-stage, all `USER`-set to a non-root account, none
+  declaring a `VOLUME`. `darkroom`'s Dockerfile is at `docker/Dockerfile` rather
+  than the project root, and `caf dev` renders the right path because it comes
+  from the manifest — checked rather than assumed.
+- **One read-only repository was written to by accident and repaired.**
+  `caf dev --dry-run` writes `caf.dev.compose.yaml` into the project directory
+  even though it starts nothing, and the dry-run against `darkroom` left one
+  behind. It was deleted immediately and `darkroom` verified clean at `bcaa2fe`.
+  The behaviour is real and is now stated on the page.
+- No dependency was added. No assertion was changed and no smoke test was
+  removed: the suite is **7 tests before and after**. No screenshot of a
+  terminal appears anywhere, because the repository's existing style uses none.
+- Nothing under `moon/refs/` or in jumpstart-pro was read or used.
+
 ## [0.1.0] — 2026-09-30
 
 ### Added

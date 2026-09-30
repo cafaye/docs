@@ -8,10 +8,10 @@ front of a laptop with a credit card. This page is the whole path from nothing
 to something running that you can show your team, in order, with the failure
 branch beside every step. It is not a tour of the features.
 
-**Everything below was run against `caf` at commit `a6dcdc0` and `identity` at
-commit `b080303`, on macOS with Docker 29.4.0.** Output is quoted where it
-matters. Where a step could not be run here, the page says so on the step
-rather than implying it was verified. The last section lists those.
+**Every command on this page was run against `caf` at commit `a6dcdc0` and
+`identity` at `master`, `35c2576`, on macOS with Docker 29.4.0.** Output is
+quoted where it matters. Where a step could not be run here, the page says so on
+the step rather than implying it was verified. The last section lists those.
 
 ## Read this before anything else
 
@@ -44,7 +44,7 @@ one you need rather than the whole platform.
 | [`courier`](https://github.com/cafaye/courier) | Transactional email, preferences, **every outbound webhook** | Elixir | **No email provider adapter configured** — nothing is delivered until you set one |
 | [`darkroom`](https://github.com/cafaye/darkroom) | Signed uploads, tenant-scoped assets, variants, S3 and R2 | Rust | No transcoding, no CDN, no malware scanning |
 | [`muse`](https://github.com/cafaye/muse) | LLM routing, encrypted credentials vault, token metering | Python | **Auth is a stub** — the token is not verified |
-| [`guard`](https://github.com/cafaye/guard) | The public edge: JWT verification, API keys, rate limits | TypeScript | **Routes nothing.** Sessions are per-process, so one replica |
+| [`guard`](https://github.com/cafaye/guard) | The public edge: JWT verification, API keys, rate limits | TypeScript | **Proxies nothing.** It serves `/v1/me` and `/auth/*` and forwards no request onward. Sessions are per-process, so one replica |
 | [`parlor`](https://github.com/cafaye/parlor) | Next.js app shell: signup, login, accounts, billing screens | Next.js | No admin surface, no e2e suite, and its `cafaye.yml` does not validate |
 
 Each has a page here that states what is built and what is not in its own words:
@@ -232,6 +232,20 @@ time by the release pipeline; a `go install` from an untagged commit has neither
 **If that version line says anything else**, you have a tagged release, which is
 better — carry on.
 
+**If it says `caf: command not found`**, the install worked and your `PATH` does
+not. `go install` writes to `$(go env GOBIN)`, which is `$GOPATH/bin` for a
+system Go and **somewhere else entirely under a version manager** — on the
+machine this page was written on, `GOBIN` is a mise directory and `$GOPATH/bin`
+is not on `PATH` at all:
+
+```sh
+go env GOBIN
+export PATH="$(go env GOBIN):$PATH"
+```
+
+Do not assume `$HOME/go/bin`. On that machine it exists, it is not on `PATH`,
+and it holds a `cafaye-cli` from months earlier that is not this program.
+
 ### Step 2 — get the source
 
 ```sh
@@ -300,8 +314,12 @@ the keys from step 2 rather than trying to work out which one is missing.
 
 Point it at a directory and it walks the tree, skipping `.git`, `node_modules`,
 `deps`, `_build` and `target`. On a whole checkout of the platform it prints one
-line per repository, which is the cheapest way to see the fleet's contract
-health:
+line per **manifest**, not per repository — `pantry` alone contributes ten,
+because its registry ships a copy of every service's `cafaye.yml`. On the
+workspace this page was written against that was **35 manifests, 30 `OK`, 5
+`INVALID`, exit 1**, and only one of the five is a defect: `parlor`'s. The other
+four are a duplicate of it in a worktree and three deliberate negative fixtures.
+[Topology](/architecture/topology/#cross-repo-drift-audit) has the table:
 
 ```sh
 caf contract lint /path/to/cafaye
@@ -326,8 +344,8 @@ Then bring it up. This builds the image, so the first run takes minutes:
 starting 3 services in identity-dev
 
 service   status   origin          notes
-postgres  healthy  infrastructure  Up 11 seconds (healthy)
-redis     healthy  infrastructure  Up 11 seconds (healthy)
+postgres  healthy  infrastructure  Up 10 seconds (healthy)
+redis     healthy  infrastructure  Up 10 seconds (healthy)
 identity  running  project         Up Less than a second
 
 identity is up on http://localhost:8080
@@ -374,7 +392,7 @@ HTTP 500
 {"type":"https://errors.cafaye.com/internal","title":"Internal server error",
  "status":500,"detail":"the request could not be completed. Quote the trace id
  when reporting this.","instance":"/v1/users","code":"internal",
- "trace_id":"2cf81ffe-03a3-4618-af46-855a86a43e45"}
+ "trace_id":"7d45460a-1d11-4628-a658-7da100eee6f3"}
 ```
 
 A bare 500 with no reason is the tell. The reason is in the service's logs, and
@@ -382,7 +400,7 @@ it names the actual problem:
 
 ```
 level=ERROR msg="request failed" error="inserting a user: ERROR: relation
-\"users\" does not exist (SQLSTATE 42P01)" trace_id=2cf81ffe-… method=POST
+\"users\" does not exist (SQLSTATE 42P01)" trace_id=7d45460a-… method=POST
 path=/v1/users
 ```
 
@@ -454,7 +472,7 @@ curl -s -X POST localhost:8080/v1/users \
 ```
 
 ```
-{"id":"d541e733-3536-465d-8623-be3c368b9cf9","email":"pilot@acme.example"}
+{"id":"5e1efb8c-240c-4cb1-9b14-1677238a04c9","email":"pilot@acme.example"}
 ```
 
 ```sh
@@ -464,13 +482,14 @@ curl -s -X POST localhost:8080/v1/session \
 ```
 
 ```
-{"token":"REDACTED","expires_at":"2026-10-30T11:41:42.197795Z"}
+{"token":"REDACTED","expires_at":"2026-10-30T12:23:14.540471907Z"}
 ```
 
-The token is a 64-character base64url string, valid for thirty days, redacted
-here because it was a real one from a throwaway database that has since been
-deleted. `POST /v1/session` also sets a `__Host-session` cookie to the same
-value; for a script, the bearer header is what you want.
+The token is a **43-character** base64url string — 32 random bytes, unpadded —
+valid for thirty days, redacted here because it was a real one from a throwaway
+database that has since been deleted. `POST /v1/session` also sets a
+`__Host-session` cookie to the same value, `HttpOnly; Secure; SameSite=Lax`; for
+a script, the bearer header is what you want.
 
 Use it:
 
@@ -484,7 +503,7 @@ curl -s localhost:8080/v1/me -H "Authorization: Bearer $TOKEN"
 ```
 
 ```
-{"id":"d541e733-3536-465d-8623-be3c368b9cf9","email":"pilot@acme.example"}
+{"id":"5e1efb8c-240c-4cb1-9b14-1677238a04c9","email":"pilot@acme.example"}
 ```
 
 **That is the first ten minutes.** A service built from its own Dockerfile, a
@@ -520,12 +539,16 @@ JWKS. With no JWKS, `guard` has nothing to verify against. Until you set those
 three variables, call `identity`'s `/v1` directly, which is what steps 5 and 6
 do.
 
-**MFA is not mounted either**, and it logs why on startup:
+**MFA is not mounted either**, and it says so twice on startup — first the
+reason, then the consequence:
 
 ```
+level=WARN msg="MFA_ENCRYPTION_KEY is not set"
 level=WARN msg="MFA_ENCRYPTION_KEY is not configured; the MFA management routes
 are not mounted and this process cannot verify a second factor for anybody"
 ```
+
+`GET /v1/mfa` answers `404`, which is the same fact from the outside.
 
 **MFA is built** — TOTP enrollment, the login challenge, recovery codes, the
 whole surface, with its own OpenAPI document. `MFA_ENCRYPTION_KEY` is base64url,
@@ -623,27 +646,35 @@ because it will get shorter and this page will be updated when it does.
 | Not ready | What it means for you | Where to check |
 | --- | --- | --- |
 | **No broker. Nothing publishes events.** | Events accumulate unpublished. No cross-service reaction happens. | `outbox_events` in any service; the publisher loop in `core/docs/event-outbox.md` |
-| **`guard` routes nothing.** | The gateway authenticates and forwards nothing. Call services directly, or accept that `guard` is an auth decorator today. | `guard`'s route table; `/v1/me` |
+| **`guard` proxies nothing.** | It authenticates and forwards no request onward. Call services directly, or accept that `guard` is an auth decorator today. | `guard`'s route table; `/v1/me` |
 | **`guard` sessions are per process.** | A browser session dies with the replica it signed in on, and is lost on restart. **Run one replica.** | the `SessionStore` in `guard` |
 | **`muse` does not verify the token it is given.** | Do not put `muse` behind anything you care about. | `muse`'s auth stub |
-| **`caf deploy`, `caf gen`, `caf init`, `caf new`, `caf mcp` are stubs.** | Five of ten subcommands parse their flags and return `not implemented in v0`. You deploy by building each repository's Dockerfile. | `caf/internal/cli/*.go`; the table in [Getting started](/getting-started/) |
+| **`caf deploy`, `caf gen`, `caf init`, `caf new`, `caf mcp` are stubs.** | Five of the ten commands `caf help` lists parse their flags and return `not implemented in v0`. You deploy by building each repository's Dockerfile. | `caf/internal/cli/*.go`; the table in [Getting started](/getting-started/) |
 | **No collector, no observability stack.** | The telemetry contract is shipped and enforced; nothing receives it. `muse` is the only service exporting anything, and it exports traces only. | [Observability](/observability/) |
 | **No password reset, no email verification.** | A user who forgets their password has no path back in. **Plan a support channel for this.** | `identity`'s README, "Not built yet" |
 | **`identity` OIDC has no refresh tokens.** | Access tokens live fifteen minutes and cannot be renewed. | the discovery document, where the absent features are absent rather than stubbed |
 | **No vault key rotation.** | `MUSE_VAULT_KEY` cannot be rotated in place. | `key_version` is always 1 |
 | **`parlor` is not a finished template,** and its manifest does not validate. | Do not clone it expecting a product shell. | the [drift audit](/architecture/topology/#cross-repo-drift-audit) |
-| **A green badge may have skipped its hard half.** `kit`'s reusable workflow is callable and seven services call it, but two repositories have no workflow at all, and in most of the fleet the interesting tests are a second tier that does not run by default. | "The gate is green" often means somebody ran the suite by hand, that day. | [Running the gates](/running-the-gates/) |
+| **A green badge may have skipped its hard half.** `kit`'s reusable workflow is callable and eight repositories now call it, but in most of the fleet the interesting tests are a second tier that does not run by default — so "the gate is green" often means somebody ran the suite by hand, that day. The exception is `identity`, whose CI refuses to skip its own database tier. | Check what ran before you check the colour. | [Running the gates](/running-the-gates/) |
 | **The licensing is unfinished.** See the section above. | Get a written answer before you build on it commercially. | the table above |
+
+One more that decides whether you can put anything in front of a customer:
+**`docs` is the only cafaye repository with no CI workflow at all.** The other
+twelve each have a `.github/workflows/ci.yml` on `master`. So a green badge
+somewhere in the fleet may still have skipped its hard half — and there is no
+badge to read at all on a `docs` commit, which is worth knowing when you ask us
+whether something is tested.
 
 Two more that are not gaps but will still surprise you:
 
 - **Nine of the ten event types `identity` writes have no payload schema in
-  core.** Only `identity.user.created` has one. Three of the nine — including
-  the two `oidc_client` types its manifest advertises — have no catalog row at
-  all, and a fourth, `identity.member.accepted`, is not even core's spelling:
-  core says `identity.member.joined`. If you build a consumer on an `identity`
-  event, you are building on a name core has not agreed to. [Upgrading](/upgrading/)
-  has the detail.
+  core, and three of the nine have no catalog row either** — the two
+  `oidc_client` types its manifest advertises, plus `identity.member.accepted`,
+  which core spells `identity.member.joined`. So exactly one of the ten,
+  `identity.user.created`, has both a published name and a published payload;
+  six more have a name core published and a payload core never described. If you
+  build a consumer on an `identity` event, you are most likely building on a
+  payload that does not exist yet. [Upgrading](/upgrading/) has the detail.
 - **`billing`'s subscription and plan event payloads do not match core's
   schemas.** `billing` emits its own ids where core's schemas describe the
   payment processor's, and its own contract test says so out loud. Prefer
@@ -688,8 +719,10 @@ What exists today, honestly:
   and its history. This is the channel we actually watch.
 - **A per-service contact address**, declared in each repository's `cafaye.yml`
   under `owner.contact`: `identity@cafaye.com`, `billing@cafaye.com`,
-  `courier@cafaye.com`, `darkroom@cafaye.com`, `muse@cafaye.com`,
-  `pantry@cafaye.com`, `caf@cafaye.com`, `core@cafaye.com`, `docs@cafaye.com`.
+  `courier@cafaye.com`, `darkroom@cafaye.com`, `guard@cafaye.com`,
+  `muse@cafaye.com`, `pantry@cafaye.com`, `caf@cafaye.com`, `core@cafaye.com`,
+  `cafaye@cafaye.com`, `docs@cafaye.com`. Two repositories declare none —
+  `kit` and `parlor` — so there is no address to write to for those two.
 - **This site.** Every command on it was run, and every gap on it was measured.
 
 What does **not** exist yet, and we would rather say so than have you discover
@@ -714,6 +747,11 @@ Stated here rather than left for you to guess:
   32-byte requirement is the thing to get right.
 - **A production deployment was not performed.** No `docker build` for each of
   the seven services, no rollout, no restore from a real backup.
+- **Only `identity` was actually run.** The other six services' rows are read out
+  of their repositories, not exercised. `caf dev --dry-run` was run against
+  `darkroom` as a second data point and rendered three services correctly — its
+  Dockerfile path comes from its manifest, not from the project root, so `caf dev`
+  finds it — but nothing was brought up.
 - **Sizing was not measured.** Nothing on this page says how much memory or CPU a
   production install wants, because nobody in the fleet has published that and
   this page did not go and find out.
@@ -721,6 +759,9 @@ Stated here rather than left for you to guess:
   `pyproject.toml` and its README; its behaviour was not exercised.
 - **Billing was not run against Stripe.** The lifecycle claims come from that
   repository's README and its tests, not from a live processor.
+- **The tenant-provisioning runbook was not re-run for this page.** It was run
+  live when it was written and every response in it is quoted from that session;
+  re-running it was out of scope here, and it is linked rather than repeated.
 
 If a step here is wrong, that is a bug in this page and it is worth an issue on
 [the docs repository](https://github.com/cafaye/docs). If a step is missing,

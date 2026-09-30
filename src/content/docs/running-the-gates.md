@@ -18,25 +18,35 @@ page disagree, the repository is right.
 `workflows/ci.reusable.yml`, where GitHub cannot resolve it, and this page said
 for several packets that the reusable CI path did not exist. It has moved to
 **`.github/workflows/ci.reusable.yml`**, which is the path GitHub requires, and
-seven services now call it as
+eight repositories now call it as
 `uses: cafaye/kit/.github/workflows/ci.reusable.yml@master`: `caf`, `core`,
-`courier`, `darkroom`, `guard`, `muse` and `parlor`.
+`courier`, `darkroom`, `guard`, `identity`, `muse` and `parlor`.
 
 What exists on `master` today, counted with `git ls-files .github/workflows`:
 
 | Has a CI workflow | Does not |
 | --- | --- |
-| `billing`, `caf`, `cafaye-rb`, `core`, `courier`, `darkroom`, `guard`, `kit`, `muse`, `pantry`, `parlor` | `identity`, `docs` |
+| `billing`, `caf`, `cafaye-rb`, `core`, `courier`, `darkroom`, `guard`, `identity`, `kit`, `muse`, `pantry`, `parlor` | `docs` |
 
-Two repositories have no workflow at all, and for those "the gate is green"
+One repository has no workflow at all, and for that one "the gate is green"
 means *a person ran the suite by hand, that day, on that machine.* Run it
-yourself before you trust a commit, and treat a badge on either of those two as
-an absence of evidence rather than evidence of absence.
+yourself before you trust a commit, and treat a badge on `docs` as an absence of
+evidence rather than evidence of absence.
+
+**One repository has closed its own tier, and it is worth naming because it is
+the shape the rest of the fleet needs.** `identity` has no longer had a workflow
+for two packets; it now calls the reusable workflow *and* runs a second `gate`
+job that starts Postgres, runs `goose up` as its own step, and asserts a floor
+of 1254 passing tests of which 1166 must be behind `TEST_DATABASE_URL`, plus
+**zero** `--- SKIP:` lines, 23 named security tests that have to appear in the
+log by name, a `git diff --exit-code` on `go.mod`/`go.sum`, and a coverage floor.
+That is what "the interesting tier cannot silently skip" looks like when a
+repository decides to mean it.
 
 **The durable warning is not the count, it is the skipping.** A badge is only
 worth what it ran, and the tiers below are the part that silently does not run
-by default. That has not changed, and it will not change because a workflow
-file exists.
+by default. `identity` is now the exception, and it is one repository — a
+workflow file existing does not make the rest of the fleet honest.
 :::
 
 ## The gate per repository
@@ -89,6 +99,13 @@ The exact DSN matters: `docker-compose.yml` publishes Postgres on host `5432`,
 and a local Postgres install already listening there means a host-side DSN
 silently reaches the *other* server and fails with `role "identity" does not
 exist`. Point the DSN at the port compose actually got.
+
+**This is the one tier in the fleet that CI now refuses to let skip.** Every
+command above is what `identity`'s own `gate` job runs, and it asserts the
+result: a pass-count floor, zero `--- SKIP:` lines, and 23 security tests that
+have to appear in the log by name. So a green `identity` badge is worth more
+than the others on this page — and only because that repository decided to make
+it worth more.
 
 ### `darkroom` — three tiers, two of them non-default
 
