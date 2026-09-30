@@ -14,13 +14,17 @@ truth, not hedging.
 
 | Service | Owns | Language | Status |
 | --- | --- | --- | --- |
-| [identity](/services/identity/) | Auth, sessions, accounts, tenancy | Go | v0 — accounts, roles, invitations |
-| [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, webhooks in |
-| [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 scaffold — sends nothing |
-| [darkroom](/services/darkroom/) | Media uploads, variants, S3 | Rust | Not started (empty repo) |
-| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth is a stub |
-| [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — real auth, no routing |
-| [parlor](/services/parlor/) | App shell template + admin | Next.js | Phase 2 — register and login only |
+| [identity](/services/identity/) | Auth, sessions, accounts, tenancy, OIDC | Go | v0 — accounts, roles, invitations, and the OIDC provider. **MFA is in flight, not shipped.** |
+| [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, the subscription lifecycle, webhooks in and out |
+| [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 — email pipeline, preferences, Oban outbox worker, signed outbound webhooks. Publishes one event |
+| [darkroom](/services/darkroom/) | Media uploads, variants, object storage | Rust | v0 — signed uploads, tenant isolation, variants, S3 **and Cloudflare R2** |
+| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth is a stub. **The only service exporting telemetry** |
+| [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — real auth, API keys, Redis-backed limits, **no routing** |
+| [parlor](/services/parlor/) | App shell template + admin | Next.js | In progress — accounts, invitations, billing screens. **No admin surface, no e2e suite** |
+
+Three of those status lines carry a gap that will bite a reader who skips them:
+`identity` has no MFA, `muse`'s auth does not verify the token it is given, and
+`guard` forwards nothing. Each is stated on its own page with the consequence.
 
 For the ports, probes, environment variables, and dependency graph behind this
 table, see [Topology](/architecture/topology/).

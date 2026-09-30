@@ -18,6 +18,8 @@
 //   - The reverse: every page in src/content/docs/ is reachable from the
 //     sidebar. A page on disk and absent from the nav is a page nobody reads,
 //     and nothing else in the pipeline notices.
+//   - No built page contains an empty <svg>, which is what an icon name
+//     Starlight does not know renders to.
 //   - No HTML snapshot, no assertion on prose. A snapshot is a test that fails
 //     on every copy edit and gets deleted within a week, which is worse than
 //     no test. Content correctness is the author's job, checked in review.
@@ -170,6 +172,48 @@ test('the services directory is not empty', () => {
   assert.ok(existsSync(services), 'src/content/docs/services/ is missing');
   const pages = readdirSync(services).filter((f) => /\.mdx?$/.test(f));
   assert.ok(pages.length > 0, 'no service pages found in src/content/docs/services/');
+});
+
+test('no built page contains an empty <svg>', () => {
+  // An icon name Starlight does not know renders as an empty <svg> — no
+  // warning, no build failure, and a card that looks slightly wrong rather than
+  // broken. That is worse than a red build, because nothing reports it.
+  //
+  // Found by writing one: `icon="seti:changelog"` is a valid *Seti UI* name and
+  // Starlight 0.42 has no `seti:` prefix support at all, so the card shipped an
+  // empty element for a whole release cycle. It is asserted here because the
+  // only way to know an icon resolved is to look at the built output, and
+  // nothing else in the pipeline looks.
+  //
+  // The scan is over the rendered pages rather than the Markdown, so it catches
+  // an empty icon anywhere — a Card, an Aside, a component prop — rather than
+  // only the two or three places an icon is written today.
+  const pages = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.html')) pages.push(full);
+    }
+  };
+  walk(dist);
+  assert.ok(pages.length > 0, `no HTML under ${dist} — run \`npm run build\` first`);
+
+  // `<svg …/>` or `<svg …></svg>` with nothing between the tags. Attribute
+  // values are matched loosely because the class hashes change per build.
+  const empty = /<svg\b[^>]*\/>|<svg\b[^>]*>\s*<\/svg>/g;
+  const offenders = pages
+    .filter((page) => empty.test(readFileSync(page, 'utf8')))
+    .map((page) => page.slice(dist.length + 1));
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `pages containing an empty <svg> (an icon name Starlight does not know, most ` +
+      `likely — check the name against the list in ` +
+      '`node_modules/@astrojs/starlight/dist/components-internals/Icons.js`): ' +
+      offenders.join(', '),
+  );
 });
 
 test('every content page is reachable from the sidebar', () => {

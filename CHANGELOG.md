@@ -49,6 +49,58 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
   fine, landed in `dist/`, and looked perfect. Written first, and it caught the
   new pages before they had sidebar entries — which is exactly the failure it
   exists to prevent.
+- `tests/smoke.mjs` — a sixth assertion: **no built page contains an empty
+  `<svg>`**, which is what an icon name Starlight does not know renders to. A
+  `seti:`-prefixed icon is a valid Seti UI name and Starlight 0.42 has no `seti:`
+  support at all, so the new Upgrading card shipped an empty element with no
+  warning and no build failure. Written first, caught it red, then fixed to a
+  name the icon set actually has.
+- **Every service page rewritten from its repository on `master`.** The status
+  lines were the drift, and a reader who trusted one would have planned around
+  a service that does not exist:
+  - `darkroom` — was *"Status: not started… the repository exists and is
+    **empty** — no manifest, no Dockerfile, no code."* Now: signed uploads,
+    tenant-isolated variants, and **Cloudflare R2 through the same S3
+    implementation** behind `--features s3`, with the four R2 differences and
+    the read-back checksum as the consequence.
+  - `courier` — was *"Status: v0 scaffold… deliberately **no notification logic
+    yet**. There is no Swoosh, no provider adapter, no job queue, no preference
+    store, and no migrations"*, and its manifest was recorded as failing
+    `caf contract lint` over two-segment event types. Now: the Swoosh pipeline,
+    preference store, Oban worker, six migrations, and outbound webhooks over
+    the **Standard Webhooks** spec with an SSRF guard; the manifest is corrected
+    and the event types carry the `courier.` prefix.
+  - `billing` — was *"There is still no outbound Stripe call anywhere in the
+    repository… There is no subscriptions table, no checkout, no portal"*. Now:
+    the subscription lifecycle, three ways out to Stripe, and out-of-order
+    webhook handling — **plus the open disagreement with core's payload schema**,
+    stated rather than smoothed.
+  - `identity` — was *"**Not built:** … the OIDC provider"*, with no
+    `/.well-known` for `guard` to verify against. Now: the OIDC provider,
+    discovery, client registration, auth code + PKCE, tokens and
+    `/.well-known/jwks.json`. **MFA is called out as in flight, not shipped**,
+    because a security model that assumes a second factor would assume it here.
+  - `guard` — was *"an in-memory fixed-window rate limiter… the session store and
+    the rate-limit counters are `Map`s in one process… Run one replica until the
+    shared stores land."* Now: a sliding-window **GCRA** limiter that runs against
+    **Redis** when `REDIS_URL` is set, plus scoped API keys and a per-route limit
+    table. Sessions remain per process, and that is still called out.
+  - `parlor` — was *"Three routes exist today: a landing placeholder at `/`,
+    `/register`, and `/login`"* with *"Not built: settings, team and invitation
+    management"*. Now: eight routes including the account surface, invitation
+    redemption and two billing screens.
+  - `muse` — records that it is **the only service in the fleet exporting any
+    telemetry**, that the exporter stays out of the image by dependency rather
+    than by convention, and that `error.type` is **not** migrated.
+  - `services/index.md` — the status table, refreshed, with the three gaps a
+    reader would otherwise plan around named in one line.
+- `index.mdx` — *"Of the ten `caf` subcommands, four do real work… and
+  `darkroom` is an empty repository"* is gone: **`caf dev` now works**, and
+  `darkroom` is three milestones past that sentence. The tooling table no longer
+  advertises `cafaye-py` and `cafaye-ts`, which **do not exist as repositories**;
+  `cafaye-rb` is described as what it is — **the shared Ruby gem** (JWKS
+  verification, transactional outbox, Rails railtie), not a generated SDK — and
+  `pantry` as Rust rather than Go.
 
 ### Added
 
