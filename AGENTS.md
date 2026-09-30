@@ -29,15 +29,23 @@ bin/prime        # or: mise run prime
 - `npm run build` **is** the gate. Starlight validates every page's frontmatter,
   Astro checks every content collection, and Starlight resolves every sidebar
   slug — so a red build is a real test failure, not a formality.
-- `tests/smoke.mjs` then asserts the build produced the pages the sidebar
-  promises, and reads its expectations from `astro.config.mjs` rather than
-  hardcoding a list that would drift. It is deliberately tiny: `dist/index.html`
-  exists and is HTML, every sidebar slug has a source file and reached `dist/`,
-  and the services directory is not empty. It does **not** snapshot HTML, because
-  a content snapshot is a test that fails on every copy edit and gets deleted
-  inside a week.
-- The suite must be able to fail. Break a sidebar slug and watch it go red
-  before you trust it green.
+- `tests/smoke.mjs` then asserts the things the build does not: that the build
+  produced the pages the sidebar promises, that **every page on disk is reachable
+  from the sidebar**, that **every internal link in the built site resolves**,
+  that **no built page contains an empty `<svg>`**, and that the services
+  directory is not empty. Each of those is a failure mode this repository cannot
+  otherwise detect — a page or a link or an icon that resolves to nothing still
+  builds perfectly green.
+
+  Those four were each found by writing the test first and watching it fail on
+  real content, so keep that discipline when adding one: an assertion nobody has
+  seen go red is a report, not a gate.
+- It reads its expectations from `astro.config.mjs` rather than hardcoding a list
+  that would drift. It is deliberately tiny otherwise: it does **not** snapshot
+  HTML, because a content snapshot is a test that fails on every copy edit and
+  gets deleted inside a week.
+- **The suite must be able to fail.** Break a sidebar slug, an internal link, or
+  an icon name and watch it go red before you trust it green.
 - `npm ci`, never `npm install`, in anything scripted. `install` rewrites the
   lockfile and lets two worktrees disagree about one commit.
 
@@ -50,6 +58,20 @@ says what is built and what is not; every command that has not shipped is
 marked <span class="badge caution">Coming soon</span>. When you do not know
 whether something works, write that you do not know — a gap the reader can see
 is worth more than a sentence that reads well and is wrong.
+
+**Re-derive a claim before you keep it; do not inherit it.** A status line, a
+test count and a lint result are all true on the day they were written and false
+by the next packet, and this repository's drift was entirely that kind. Two
+rules that follow:
+
+- **Run the command.** The drift audit is produced by executing
+  `caf contract lint` over the workspace, not by remembering what it said last
+  time. A table that was copied rather than re-run is a changelog with a table
+  in it.
+- **A service repository is read-only here.** When its README contradicts its
+  own code, the code is right and the contradiction goes in the drift audit as a
+  finding. Editing another repository's prose to match this site is out of scope
+  even when the edit is obviously right.
 
 **`core` is the source of truth; this site summarizes it.** `contracts.md`
 describes `cafaye.yml`, the event envelope, and OpenAPI. Those specs are owned
@@ -89,7 +111,8 @@ astro.config.mjs          site URL, Starlight config, the sidebar (a promise abo
 src/content.config.ts     Starlight's docs collection + an empty i18n collection
 src/content/docs/         every page; index.mdx is the splash home
 src/pages/404.astro       /404, owned here rather than injected by Starlight
-tests/smoke.mjs           the whole suite: dist/index.html and every sidebar page
+tests/smoke.mjs           the whole suite: dist/index.html, every sidebar page,
+                          every internal link, every icon, both directions
 bin/prime                 the gate: npm ci, build, smoke test
 cafaye.yml                the cafaye manifest, so the org tooling finds this repo
 mise.toml                 node 22.19.0 — covers Astro 7's floor and every transitive engine
@@ -111,7 +134,11 @@ mise.toml                 node 22.19.0 — covers Astro 7's floor and every tran
 
 - [ ] `bin/prime` is green, and you have pasted the output
 - [ ] No new page is missing from the sidebar, and no sidebar entry lacks a page
-- [ ] Status lines still match what the service repositories actually claim
+- [ ] Every command, count and table on the changed pages was **run**, not copied
+      from the previous version of the page
+- [ ] Status lines still match what the service repositories actually claim —
+      and any repository whose README contradicts its own code is in the drift
+      audit rather than edited
 - [ ] `README.md` still matches the tree (run commands, deploy steps)
 - [ ] `CHANGELOG.md` has an entry
 - [ ] You did not weaken the gate, loosen an assertion, or add a dependency to

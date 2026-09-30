@@ -84,13 +84,17 @@ it.
 ### CI
 
 The gate command is `bin/prime`, and that is what CI should run: build plus the
-smoke test, no secrets, nothing published. There is no CI workflow in this
-repository yet — `kit`'s reusable workflow
-(`cafaye/kit/workflows/ci.reusable.yml`) has a `node` job, but it runs
-`npm test` without building first, so it would fail here on a clean checkout.
-Wiring it up properly is a one-line change to that workflow once kit carries a
-"build before test" step; until then the honest options are a job that runs
-`bin/prime` directly, or none at all.
+smoke test, no secrets, nothing published. **There is no CI workflow in this
+repository**, and that is the same for most of the fleet: `kit`'s reusable
+workflow sits at `workflows/ci.reusable.yml`, which GitHub cannot resolve —
+reusable workflows are only callable from `.github/workflows/` in the owning
+repository — so a repository calling it gets a workflow-not-found error.
+
+That is being fixed in `kit`. Until it lands, the honest options here are a job
+that runs `bin/prime` directly, or none at all. Do not wire this repository to
+`cafaye/kit/workflows/ci.reusable.yml@master` and call it done: it looks correct
+and it fails at run time. [Running the gates](/running-the-gates/) has the
+fleet-wide picture.
 
 ## Content
 
@@ -100,13 +104,17 @@ Pages are Markdown and MDX in `src/content/docs/`; the file path is the URL.
 src/content/docs/
 ├── index.mdx                 home — what cafaye is, plus the services table
 ├── getting-started.md        the six-step path: doctor → install → init → local → deploy
-├── contracts.md              cafaye.yml, the event envelope, OpenAPI
+├── upgrading.md              the migration note: what breaks, and in what order
+├── contracts.md              cafaye.yml, the event envelope, OpenAPI, the five-part rule
 ├── troubleshooting.md        keyed by symptom, not by component
 ├── architecture/
 │   ├── index.md              what each service owns, and why the boundaries
-│   └── topology.md           ports, probes, env vars, dependency graph
+│   ├── topology.md           ports, probes, env vars, HTTP surfaces, the drift audit
+│   └── …                     observability.md sits beside them in the nav
+├── observability.md          the seven telemetry schemas, and what is not deployed
+├── running-the-gates.md      the real gate per repository, and the tiers that skip
 ├── runbooks/
-│   ├── index.md              the five, and the two facts they all assume
+│   ├── index.md              the five, and the facts they all assume
 │   ├── tenant-provisioning.md
 │   ├── backup-and-restore.md
 │   ├── secret-rotation.md
@@ -128,7 +136,9 @@ src/content/docs/
   turns that off so this repository owns one route with no build warning.
 - Service pages are written from PLAN.md §tree and the org README. Where they
   describe a service, [that repository's](https://github.com/cafaye) README and
-  code are the source of truth — not this page.
+  code are the source of truth — not this page. **Where a service's own README
+  contradicts its code, the code is right and the contradiction goes in the
+  drift audit**, because this repository does not edit another repository's prose.
 - Contract details are owned by
   [cafaye/core](https://github.com/cafaye/core). This site summarizes and links;
   it does not define.
@@ -159,19 +169,36 @@ apart.
 
 ### Findings are recorded, not smoothed over
 
-Where a page describes something broken or missing in a cafaye repository, it
-says so on the page an operator will hit, with the error they will see. See
-[Topology](/architecture/topology.md)'s *Manifest drift you may hit* section and
-[Troubleshooting](/troubleshooting.md). The current ones:
+Where a page describes a broken or missing thing in a cafaye repository, it says
+so on the page an operator will hit, with the error they will see. The single
+audit is [Topology](/architecture/topology/#cross-repo-drift-audit), and it is
+**re-run, not recalled** — the lint table comes from executing
+`caf contract lint` over the workspace. Its second half, *the drift the linter
+cannot see*, is the part that matters most:
 
-- `goose` panics on `identity`'s migrations — two files share version 5 — so the
-  command in that repository's own README does not work.
-- `GET /v1/accounts/{id}/members` returns only each member's `role`; the ids
-  come back empty.
-- `caf contract lint` fails on `caf`, `courier`, and `parlor`.
+- `core/fleet.yml` is transcribed at commits that have since moved:
+  `identity` now declares two OIDC event types, and `courier`'s recorded
+  `manifestViolations` still list spellings `courier` has fixed.
+- `identity` **emits five tenancy event types it does not declare**, and one of
+  them (`identity.member.accepted`) is not core's spelling — core's catalog
+  row says `identity.member.joined`.
+- `identity.oidc_client.created` and `.revoked` are **declared with no core
+  catalog row and no payload schema**, which is the exact gap core's catalog
+  assertions exist to close.
+- `billing`'s subscription payloads **do not validate** against core's schemas,
+  and billing's own contract test says so out loud rather than absorbing it.
+- `courier`'s README and `identity`'s README **contradict their own
+  repositories** — courier's calls itself a scaffold with "no notification logic
+  yet", identity's opens "v0 is a skeleton. There is no auth logic here yet".
+- `goose up` is a **prerequisite** for identity's OIDC tests, and without it the
+  failure names a relation (`public.oidc_clients`) rather than the missing step.
+- `GET /v1/accounts/{id}/members` returns only each member's `role`; the ids come
+  back empty.
+- `/favicon.svg` is a 404 on every page. Starlight hard-defaults it and this
+  repository has no brand asset; inventing one is a decision this project has
+  explicitly not made.
 
-A docs site that hides a known defect is not being honest, it is being
-useless.
+A docs site that hides a known defect is not being honest, it is being useless.
 
 ## Deliberately absent
 

@@ -103,6 +103,19 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Changed
 
+- `README.md` — the content tree gains `upgrading.md`, `observability.md` and
+  `running-the-gates.md`. The *Findings are recorded* section is replaced by the
+  eight live drift-audit findings rather than the three it listed, and the CI
+  section no longer describes a hypothetical `node` job: **the reusable workflow
+  is currently uncallable** because it sits at `workflows/ci.reusable.yml` and
+  GitHub only resolves reusable workflows from `.github/workflows/`.
+- `AGENTS.md` — the gate section describes what `tests/smoke.mjs` now asserts,
+  and adds a rule that did not exist because nothing forced it: **re-derive a
+  claim before you keep it, do not inherit it.** Run the command; a table that
+  was copied rather than re-run is a changelog. Plus the read-only boundary for
+  service repositories, and a pre-commit item that asks whether every changed
+  number was run.
+
 - **The runbooks now tell you what the gates actually need.** This is the
   most useful correction in the packet, because a runbook that says "run the
   gate" without naming the environment is instructing the reader to verify
