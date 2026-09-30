@@ -10,6 +10,55 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Added
 
+- **`gate.yml`** — what `bin/prime` is worth in this repository, declared
+  against `core`'s `schemas/gate.schema.json` and checked by
+  `core/harness/bin/gate-check`. Six repositories declared their gate; this is
+  the seventh. It exists because a green `bin/prime` here previously said nothing
+  about whether the gate could detect anything: **the declaration names the whole
+  gate, `./bin/prime --contracts`, and not the 16-test default**, because the six
+  contract tests are the only ones that can catch a documented example
+  contradicting something that has actually shipped, and declaring the subset
+  would be declaring the badge. Eight `proof:` entries, five of them with a
+  floor, each measured from a real run: the offline tier's 16, the contract
+  tier's 6, 2 manifests through the real validator, 8 event-type claims against
+  core's catalog of 30, and 6 span names against core's pattern. Four of the
+  eight are anchored to the `== …` banner that precedes their tier, which is
+  load-bearing: `node --test` prints **two** summary blocks under `--contracts`
+  and the checker reads the last match, so an unanchored `^# pass ([0-9]+)$`
+  silently reads the contract tier's 6 and a floor of 16 would be red on a fully
+  green run. `external.selfContained` is `false` with four requirements whose
+  failure messages were **demonstrated**, not predicted — including npm's, which
+  is on *every* run here rather than once on a cold checkout, because `npm ci`
+  deletes `node_modules` and reinstalls the lockfile each time.
+- **Three red proofs, run.** A gate that has never been observed red is not a
+  gate. `tests/links.mjs` and `tests/examples.mjs` removed from the `test`
+  script: **`bin/prime` exited 0** at 7/7, and the declaration said
+  `gate.floor: proof 'offline-suite' reported 7 and the declaration's floor is
+  16`. `CORE_PATH` pointed at an empty directory: `gate.nonzero`, plus
+  `gate.floor` and two `gate.proof-missing`, and **nothing skipped**. `CAF` set
+  to `/usr/bin/true`: **all 22 tests passed, exit 0**, the tier still printed
+  `manifests validated by caf contract lint: 2`, and the single thing that
+  caught it was the proof that matches `caf contract lint`'s own stdout — the
+  count-based proof was satisfied by the stub, because that line is printed by
+  the test and not by `caf`.
+
+### Fixed
+
+- **`running-the-gates.md` claimed this repository has no CI.** It put `docs` in
+  a "does not have a CI workflow" column and told the reader to "treat a badge
+  on `docs` as an absence of evidence rather than evidence of absence". Both
+  were true until docs-05 and neither was true after it: `.github/workflows/ci.yml`
+  and `external-links.yml` have been on `master` since. The page is the fleet
+  runbook, so a reader landing here was being told, in this repository's own
+  prose, not to trust this repository. Its `docs` row also named only
+  `bin/prime`, omitting the contract tier and both of the prerequisites that
+  tier needs.
+- **A stale count in `AGENTS.md`** — "26 external links" where the suite measures
+  **50**. The other five counts on that line (103 shell fences, 11 JSON fences, 2
+  manifests, 6 `caf` subcommands, 0 redirects) were re-measured and are correct.
+
+### Added
+
 - **CI, and a gate that is a real one.** `.github/workflows/ci.yml` with three
   jobs — `gate`, `contracts`, `pins` — and `.github/workflows/external-links.yml`
   for the network tier. The gate runs on the pinned interpreter and *asserts* it,

@@ -26,12 +26,18 @@ What exists on `master` today, counted with `git ls-files .github/workflows`:
 
 | Has a CI workflow | Does not |
 | --- | --- |
-| `billing`, `caf`, `cafaye-rb`, `core`, `courier`, `darkroom`, `guard`, `identity`, `kit`, `muse`, `pantry`, `parlor` | `docs` |
+| `billing`, `caf`, `cafaye-rb`, `core`, `courier`, `darkroom`, `docs`, `guard`, `identity`, `kit`, `muse`, `pantry`, `parlor` | — |
 
-One repository has no workflow at all, and for that one "the gate is green"
-means *a person ran the suite by hand, that day, on that machine.* Run it
-yourself before you trust a commit, and treat a badge on `docs` as an absence of
-evidence rather than evidence of absence.
+`docs` was on the right until **docs-05**, which added
+`.github/workflows/ci.yml` (`gate`, `contracts`, `pins`) and
+`.github/workflows/external-links.yml` (the network tier). Until then "the gate
+is green" for this repository really did mean *a person ran the suite by hand,
+that day, on that machine*, and this page used to say so.
+
+`cafaye-py` is on neither side.
+That gap predates docs-05 and this repository's suite cannot reach it, so this
+page does not claim anything about it: a row here is only correct if it was read
+out of the repository it names.
 
 **One repository has closed its own tier, and it is worth naming because it is
 the shape the rest of the fleet needs.** `identity` has no longer had a workflow
@@ -65,7 +71,7 @@ workflow file existing does not make the rest of the fleet honest.
 | `pantry` | `./bin/prime` | `cargo` — **the drift tests skip without a workspace** |
 | `cafaye-rb` | `bin/prime` | `mise install` — `rake db:prepare`, rubocop, bundler-audit, `rake test` |
 | `kit` | `bash tests/validate.sh` | **needs a virtualenv** — see below |
-| `docs` | `bin/prime` | `mise install` — `npm ci`, `npm run build`, `npm test` |
+| `docs` | `./bin/prime` and `./bin/prime --contracts` | `mise install` — the second needs a readable `core` and a `caf` binary, and **fails** rather than skipping without them |
 
 ---
 

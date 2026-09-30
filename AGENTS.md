@@ -50,7 +50,7 @@ bin/prime             # or: mise run prime
   written beside it, so there is one place that says what `caf` can do.
 - The counts are printed, because a check that reports nothing looks like a
   check that found nothing: 103 shell fences, 11 JSON fences, 2 manifests, 6
-  `caf` subcommands, 26 external links, 0 redirects.
+  `caf` subcommands, 50 external links, 0 redirects.
 
 ### The contract tier
 
