@@ -10,6 +10,48 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Added
 
+- **Upgrading** (`src/content/docs/upgrading.md`) — a migration note for a
+  self-hoster with a **running deployment**, not a changelog. Written for
+  someone who has to do the work on a Sunday afternoon with a customer waiting.
+  It opens by saying how urgent any of it is (no service starts an outbox
+  publisher loop, so if you have not written your own, nothing is on a bus),
+  then gives the order — **widen the consumer to accept both spellings, cut the
+  producer, watch the old spelling reach zero, narrow the consumer** — because
+  there is no order in which a consumer matching exactly one spelling is correct
+  across the courier rename. It covers the three consumer-breaking changes: the
+  three-segment courier event types, core D10's rewrite of
+  `billing.subscription.started`, and the `oneOf` on
+  `billing.payment.succeeded`; and it states the five-part rule for registering
+  an event type.
+- **Observability** (`src/content/docs/observability.md`) — the telemetry
+  contract `core` owns, summarized: the seven schemas, the span-name grammar,
+  the per-signal attribute allowlists, the ban on unbounded identifiers on a
+  measurement, the redaction boundary for LLM content, `error.type`,
+  `/healthz`/`/readyz` as schemas, and the `<SERVICE>_OTEL_ENDPOINT` contract
+  with its no-op path. It leads with what is **not** true: no collector is
+  deployed, no stack is running, exactly one service (`muse`, traces only)
+  exports any signal, no service has been migrated to the bounded `error.type`
+  vocabulary, and there is no shared error dashboard.
+- **Running the gates** (`src/content/docs/running-the-gates.md`) — the exact
+  command for every cafaye repository, and the tiers that do **not** run by
+  default. `identity` needs `TEST_DATABASE_URL` **and a `goose up` first**
+  (without it: `relation "public.oidc_clients" does not exist`, an error naming
+  a relation rather than the missing step); `darkroom` has a `--db` tier plus a
+  third tier (`--features s3`) that `cargo test` never compiles at all; `muse`
+  needs `MUSE_CORE_SCHEMAS=../core/schemas` for its two core-parity tests;
+  `pantry`'s eight drift tests skip without a workspace and need
+  `PANTRY_CAFAYE_ROOT`; `kit` needs a virtualenv with PyYAML. It opens by
+  saying CI is **not** fleet-wide and that `kit`'s reusable workflow is
+  currently uncallable, with the five repositories that do have a workflow.
+- `tests/smoke.mjs` — a fifth assertion, and the direction that was missing:
+  **every content page is reachable from the sidebar.** The four existing tests
+  are sidebar → disk, so a page on disk and absent from the navigation built
+  fine, landed in `dist/`, and looked perfect. Written first, and it caught the
+  new pages before they had sidebar entries — which is exactly the failure it
+  exists to prevent.
+
+### Added
+
 - **Architecture** (`src/content/docs/architecture/index.md`) — what each service
   owns and why the boundaries are where they are: the `identity` and `billing`
   ownership boundaries, HTTP for questions versus events for facts, the
