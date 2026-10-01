@@ -37,18 +37,30 @@ Dockerfile on infrastructure you control. [Getting started](/getting-started/)
 has the build and run steps; [Topology](/architecture/topology/) has every port
 and environment variable in one table.
 
-**The deployment mechanism is Kamal, and almost nothing has adopted it.** `kit`
-ships three files — `config/deploy.yml`, `config/kamal-backup.yml` and
-`bin/drill` — and **only `billing` has a `config/deploy.yml` at all**, and it is
-the stock Rails one rather than kit's template. So the `docker` and `kamal`
-commands in these runbooks are addressed to the two situations that actually
-exist: a container you started yourself, and a host you are logged into. Where a
-command only works in one of those, the page says so. [Backup and
+**The deployment mechanism is Kamal, and adoption is partial — nothing is
+deployed through it yet.** `kit/templates/kamal/` ships three files:
+`deploy.yml.erb` (→ `config/deploy.yml`), `kamal-backup.yml.erb` (→
+`config/kamal-backup.yml`) and `drill.sh` (→ `bin/drill`). **Three repositories
+carry a `config/deploy.yml`:** `identity` and `courier` have adopted kit's
+template, and `billing`'s is the stock Rails-generated file from its first commit
+with its `proxy:` and `accessories:` blocks commented out. Two carry a
+`config/kamal-backup.yml` — `identity` and `courier`. **No repository carries
+`bin/drill`.** So the `docker` and `kamal` commands in these runbooks are
+addressed to the two situations that actually exist: a container you started
+yourself, and a host you are logged into. Where a command only works in one of
+those, the page says so. [Backup and
 restore](/runbooks/backup-and-restore/) is the runbook that measured this gap
 rather than assuming it.
 
-**Only four of the seven services have a Compose stack you can bring up on its
-own.** `darkroom`, `muse` and `guard` do. `identity`, `courier` and `billing`
+**Migrations are a deploy step, not a boot step.** No service migrates on boot.
+Run them as a job before the new image rolls out, and fail the deploy on a
+non-zero exit. A half-applied migration is worse than one that did not run.
+`bin/dev` runs your repository's migration command for you locally; nothing
+does it in production.
+
+**Only three of the seven services have a Compose stack you can bring up on its
+own.** `darkroom`, `muse` and `guard` do — `guard`'s has no database at all, the
+other two own theirs. `identity`, `courier` and `billing`
 carry a `docker-compose.yml` that is an **override** — the service, its database
 name and its crash layer, and no `image:` on `postgres` because kit's fetched
 stack ships that container — so `docker compose up -d` in those repositories fails
@@ -63,10 +75,6 @@ the only thing in this platform that a backup runbook has to care about.
 presigned writes into a bucket you choose (S3 or Cloudflare R2), and the bucket is
 **not** covered by the database dump. A restored database whose objects are gone
 has assets pointing at nothing.
-
-**Migrations are a deploy step, not a boot step.** No service migrates on boot.
-Run them as a job before the new image rolls out, and fail the deploy on a
-non-zero exit. A half-applied migration is worse than one that did not run.
 
 **A green badge is only worth what it ran.** `kit`'s reusable workflow is callable
 and eight repositories now call it, but in most of the fleet the interesting

@@ -107,13 +107,21 @@ curl -s localhost:8080/healthz
 There is **no `POSTGRES_PORT` variable** here to move it — the published port is
 a literal, and a second compose file's `ports:` list is appended rather than
 substituted, so adding one is not the fix. Run one service at a time, or stop
-whatever holds 5432.
+whatever holds 5432. The variable that does exist is `KIT_POSTGRES_PORT`, and it
+belongs to `kit`'s stack rather than to this file.
 
-The image is built from **`docker/Dockerfile`**, not `./Dockerfile`:
+The image is built from **`docker/Dockerfile`**, not `./Dockerfile`, and it needs
+**no build flags**:
 
 ```sh
-docker build -f docker/Dockerfile --build-arg --features s3 -t darkroom .
+docker build -f docker/Dockerfile -t darkroom .
 ```
+
+That file already runs `cargo build --release --locked --features s3`, so the
+default build **is** the S3 build. A previous version of this page printed
+`--build-arg --features s3`, which is not a command: `--build-arg` needs a
+`NAME[=VALUE]` after it, so Docker refuses at the flag parser before it reads a
+Dockerfile.
 
 | Variable | Meaning |
 | --- | --- |

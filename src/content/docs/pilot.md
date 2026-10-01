@@ -590,6 +590,13 @@ base64url string the service reads — checked, it decodes back to exactly 32
 bytes, and `identity` refuses to start if it does not. The `tr -d '=\n'` matters:
 base64 padding and the trailing newline are both length, and a value one
 character too long fails at boot rather than at enrollment.
+
+**And `bin/dev` is still known not to finish for this repository**, so the
+paragraph above is the shape of the loop and not a verified recipe end to end.
+That is a defect in `identity`'s compose file rather than in this page; [Getting
+started](/getting-started/#step-5--run-a-service-locally) states what it ends on
+and what the message means.
+
 The enrollment-and-confirm walkthrough is in that repository's README and was
 **not** re-run for this page — see [what this page does not
 verify](#what-this-page-does-not-verify).

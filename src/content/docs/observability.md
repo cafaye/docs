@@ -25,6 +25,17 @@ config, the Tempo/Loki/Mimir configs, the Grafana provisioning, and two
 dashboards — and `bin/dev` fetches the whole thing from a pinned ref and brings
 it up.
 
+**A service repository's own `docker-compose.yml` starts none of it**, and for
+`identity`, `courier` and `billing` it does not even start on its own — those
+three are *overrides* on `kit`'s stack, so plain `docker compose up` fails with
+`service "postgres" has neither an image nor a build context specified` and
+`bin/dev` is the command that composes them. Either way the collector is absent,
+so a service brought up without `kit`'s stack is exporting to a name that does
+not resolve: every service that has an SDK defaults
+`<SERVICE>_OTEL_ENDPOINT` to **`http://otel-collector:4318`**, and
+`otel-collector` is a service name **inside kit's network** and nothing else. A
+service in any other network dials itself.
+
 **And `bin/dev` is the only thing that starts a collector, which is a smaller
 adoption problem than it looks like.** A service repository's own
 `docker-compose.yml` never mounts the collector's config, so bringing one up on

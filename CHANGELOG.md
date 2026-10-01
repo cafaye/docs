@@ -64,6 +64,109 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Fixed
 
+- **The merge of `master` into this branch concatenated the two append-only
+  logs instead of choosing between them, and found one clause in `docs-24`'s
+  entry that measurement overrules.** `master` carried `docs-24` — a rewritten
+  `architecture/topology.md` and two new pages — and this branch carried
+  `docs-23`, `docs-25` and the recovery of a killed worker. Three files
+  conflicted (`AGENTS.md`, `CHANGELOG.md`, `architecture/topology.md`) and
+  **`runbooks/backup-and-restore.md` auto-merged**, which is where the merge's
+  real risk was.
+
+  - **The append-only rule was applied rather than assumed.** `CHANGELOG.md`
+    records what each session found, and both sides had entries about the same
+    defect class in different shapes. The 116-line deletion in `9ced5b8` — a
+    *shape* difference resolved by deleting a side's words — is why this merge
+    concatenates. Every top-level entry from both sides survives, in its own
+    session's words and in its original order, newest first: `docs-26` (this
+    entry), `docs-25`, `docs-24`'s two, `docs-23b`, `docs-23`. Counted rather
+    than asserted: `[Unreleased]` carried **20** `### Fixed` and **17** `### Added`
+    entries on `master` and **29** and **17** on this branch, and carries **32**
+    and **19** here — 29 + 2 + this one, and 17 + 2.
+
+  - **`docs-24`'s "`Every service is on Postgres 17` … all still true and are
+    still here" is not, and the page no longer says it.** The measurement stands
+    over the sentence: a first run gets `postgres:16.6-alpine`, not 17, because
+    the `.env` `bin/dev` writes comes from `kit/.env.example` and overrides kit's
+    `17-alpine` compose default; `caf dev` renders `postgres:16-alpine`. That is
+    three values, and `topology.md` now states the standard and the three values
+    separately. `docs-25`'s correction of the Database column also survives, and
+    it is why that column reads *via `kit`'s container* for three rows: those
+    services pin no tag of their own, so "Postgres 17" was never true of them.
+
+  - **One clause `docs-24` added to that column was false, and is narrowed with
+    the measurement attached rather than substituted.** It read "every database
+    has the same name as the service that owns it". `darkroom`'s own
+    `docker-compose.yml` sets **`POSTGRES_DB: darkroom_test`** with role
+    `darkroom` and points `DATABASE_URL` at `…/darkroom_test`; its CI workflow
+    uses the same name — and so does a `sh` fence this site has carried in
+    `running-the-gates` all along, so the clause contradicted the repository's
+    own example. For that one service the database and the role are spelled
+    differently. The page now says so and names `darkroom` as the exception.
+    `docs-24`'s entry above is left standing, unreworded.
+
+  - **The auto-merged runbook needed no repair, and that was checked rather than
+    assumed.** `runbooks/backup-and-restore.md` is in neither side's conflict
+    set, and `master` still carries the status line `docs-25` corrected — it
+    branched before that fix, so its version of the block is the older one.
+    Git's auto-merge kept the corrected block **and** kept `docs-24`'s two
+    unique additions: the "a database is not the same as a server" paragraph and
+    the `CONNECT`-grant consequence under item 3. Both were read in the merged
+    file rather than assumed from the fact that git reported no conflict.
+
+  - **`AGENTS.md`'s one conflicted line is a measurement, so it was re-measured
+    rather than picked.** It is the shell-fence count — a fact about this tree,
+    not a historical record — and `master` said 129 where this branch said 115.
+    **Neither number was right for the merged tree:** the suite reports **136**
+    `sh` fences, because both sides' pages are now in the same site. The file's
+    own rule is *"Measured on this branch by running the suite"*, so 136 is what
+    it now says, and the other five counts were re-read from the same run
+    (12 JSON, 2 manifests, 6 `caf` subcommands, 69 external links, 0 redirects).
+
+  - **The remaining contested measurements were re-run against the service
+    repositories and hold**, so nothing in the tree changed to accommodate this
+    merge. The OTEL default is `http://otel-collector:4318` in all three
+    services' code (`identity/internal/telemetry/telemetry.go:102`,
+    `courier/lib/courier/telemetry.ex:86`), which is the column `topology.md`
+    documents; `identity`'s and `courier`'s `config/deploy.yml` set
+    `http://localhost:4318` explicitly, but that is a deploy file's own value and
+    not the default. No service deploys against `/up` (`identity` and `courier`
+    set `path: /readyz`; `billing`'s `proxy:` is commented out). Three of the
+    seven services have a standalone stack — `docker compose config --services`
+    fails outright in `identity` and `billing`, and `darkroom` resolves to
+    `postgres` plus `darkroom`. The log-driver failure is a resolver failure, not
+    a connection failure.
+
+- **The merge that combined `docs-23` and `docs-23b` lost 116 lines of
+  `docs-23`'s changelog entry, and left one status line contradicting the body
+  beneath it.** Both found by verifying the resolution rather than reading it, and
+  both are the failure this file exists to prevent — a resolution that quietly
+  keeps one side.
+
+  - **`docs-23`'s entry was cut off after its first paragraph.** It had survived
+    in two shapes: an introductory bullet and then **nine further top-level
+    findings** as siblings. The merge kept the first and dropped all nine, because
+    `docs-23b` had folded the same nine subjects into one bullet with nested
+    sub-bullets — so a *shape* difference was resolved by *deleting* a side's
+    words rather than by keeping both. The nine are restored byte-for-byte, in
+    `docs-23`'s own words, in their original order.
+
+    One of the nine — the `/up` proxy healthcheck — is a claim docs-25's own
+    measurement **overruled**, so it carries an added, attributed correction
+    beneath it rather than a substituted one: the record of what a session found
+    and the record of what was later measured both survive, which is what an
+    append-only history is for. Every other one is still true as written, and the
+    pages already carry each of them.
+
+  - **`runbooks/backup-and-restore.md` said two contradictory things about
+    Kamal.** Its status line read *"no service has adopted it yet"* while the body
+    seven lines below said `identity` and `courier` adopted kit's templates on
+    2026-10-01 — and so did a closing paragraph telling the reader to copy the two
+    templates in. The body was correct; the two other sentences were stale, and a
+    status line is the sentence a reader trusts. All three now agree. This page was
+    **not** in the conflict set, which is the point: a merge that only reconciles
+    the files git flagged as conflicted leaves the auto-merged ones untouched.
+
 - **`architecture/topology.md` described a fleet that has one Postgres.** The
   per-service table said "Postgres 17, own database" on every row, which reads as
   a server per service, and the port paragraph reasoned about ports in a world
@@ -110,6 +213,13 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
   made false by the single-cluster change. `billing`'s four databases are
   `config/database.yml`'s `production` block, and the deployment template still
   provisions one Postgres accessory per service.
+
+<!-- TWO ENTRIES, NOT ONE. `docs-23` and `docs-23b` were two sessions working in
+     this repository at the same time, unaware of each other, and both were
+     right: both found the same defect class — procedures and commands that do
+     not run — independently, and neither is a subset of the other. They are
+     recorded as two entries, each in its own session's words, rather than
+     merged into one. Newest first. -->
 
 - **The other four runbooks, and six pages outside `runbooks/`, described tooling
   from the era before the Kamal pivot.** The backup runbook was rewritten today
@@ -221,6 +331,164 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
     and it cannot start a database alone. `gate.yml`'s prose is how the phantom
     `POSTGRES_PORT` survived into four pages of this site in the first place,
     which is worth knowing before the next page inherits it again.
+
+<!-- `worker/docs-23`, ab9ad69, 2026-10-01. The entry above is `docs-23b`,
+     merged to master as 4d06488 on 2026-10-02. Both are kept whole, and this
+     merge (docs-25) resolved the collision between them without folding the
+     two accounts into one. -->
+
+- **The other four runbooks were written in the same era as the backup one, and
+  carried the same class of defect: procedures that do not run.** Checked every
+  runbook plus `guides/`, `getting-started`, `pilot` and `upgrading` for
+  references to tooling that no longer exists. **`bin/backup.sh`,
+  `templates/backup/` and `Dockerfile.backup` were already gone** — yesterday's
+  rewrite was the last page that mentioned them, and it mentions them only to
+  record their deletion — so that half of the packet found nothing.
+
+  What it did find was the defect the backup page was rewritten for, one layer
+  over: **a `docker compose` command that fails.** `identity`, `courier` and
+  `billing` ship a compose file that is an **override** on `kit`'s stack, not a
+  whole stack, so it has no Postgres image of its own. Run alone it starts
+  nothing:
+
+  ```
+  service "postgres" has neither an image nor a build context specified: invalid compose project
+  ```
+
+  Five pages told a reader to run it — `getting-started`, `pilot`,
+  `running-the-gates`, `services/identity`, `services/courier`. All now say
+  `bin/dev`, which is what ships in those three repositories.
+
+- **The Postgres port table was wrong in every row that mattered.** The site
+  said four repositories publish 5432 and that `POSTGRES_PORT=5433` moves one.
+  Measured against the compose files: **only `darkroom` publishes 5432** and
+  only `muse` publishes 5433. `identity`, `courier` and `billing` publish nothing
+  of their own and use `kit`'s container, published on **15500**. **No compose
+  file in the fleet reads `POSTGRES_PORT`** — the variable that exists is
+  `KIT_POSTGRES_PORT`, it is `kit`'s rather than a service's, and it is set in
+  `.env`.
+
+  The real reason you run those three one at a time is not a port at all: they
+  share one Postgres container and each **renames its database**
+  (`POSTGRES_DB: identity` / `courier` / `billing`), and compose merges those
+  overrides last-one-wins. Two up together and one service's DSN points at a
+  database that does not exist — which presents as
+  `role "…" does not exist` and reads exactly like a wrong password.
+
+- **`muse` was documented as `postgres:18-alpine`.** It is not, and has not been:
+  its compose file records the move off 18 onto `postgres:17-alpine`. Worse, the
+  claim that replaced it — "every Postgres in the fleet is 17" — would have been
+  **wrong too**, because `bin/dev up` starts **`postgres:16.6-alpine`**.
+  `kit`'s compose file defaults `KIT_POSTGRES_TAG` to `17-alpine` but the `.env`
+  it creates on a first run comes from `kit`'s `.env.example`, which pins
+  `16.6-alpine`. The default in the compose file is not the version you get, and
+  it matters because `pg_dump` is silent about a server that is much older and
+  loud about one that is newer.
+
+- **`getting-started` documented two `docker build` invocations that cannot
+  parse.** `courier`'s line passed `--build-arg SERVICE_NAME=courier`; that
+  Dockerfile declares no such argument and its compose file passes no `args:`,
+  so the flag did nothing while looking like it configured something. `darkroom`
+  passed `--build-arg --features s3`, and `--build-arg` needs a `NAME[=VALUE]`
+  after it, so Docker refuses before it reads a Dockerfile
+  (`flag needs an argument: --build-arg`). `docker/Dockerfile` already runs
+  `--features s3`, so the deployment build needs no flag at all — a third page,
+  `architecture/topology`, carried the same invalid flags and now does not
+  either.
+
+- **`kit`'s proxy healthcheck is `/up`, which is a liveness check that only
+  `billing` serves.** `deploy.yml.erb` comments `/up` as "a READINESS endpoint,
+  not a liveness one" and `kamal deploy` gates the rollout on it. In `billing`,
+  `/up` is `rails/health#show` — it answers 200 if the app booted and **does not
+  touch the database**; the readiness endpoint is `/readyz`. The other five
+  services do not serve `/up` at all, so a proxy pointed at it gets a 404 and
+  the rollout never goes green. Both facts are now stated, with the caveat that
+  the template is `kit`'s to fix.
+  <!-- docs-25, 2026-10-02: the claim above was measured and OVERRULED, so this
+       paragraph is added rather than substituted — docs-23's own words are left
+       standing. Measured: `identity/config/deploy.yml` (f89ab87) and
+       `courier/config/deploy.yml` (06cd732) both copied kit's template and both
+       changed `proxy.healthcheck.path` from `/up` to `/readyz`, commented, in the
+       file. `billing`'s `config/deploy.yml` is the stock Rails-generated file and
+       has its whole `proxy:` block commented out. So **no service in the fleet is
+       deploying against `/up`** and the last sentence of the bullet above — that a
+       proxy pointed at it gets a 404 and the rollout never goes green — describes
+       the template's default, not a live outage. "The other five services" also
+       undercounts: `parlor` also serves `/healthz` and `/readyz` and not `/up`,
+       which makes six. `getting-started.md` § "kit's proxy healthcheck path is
+       `/up`" now says the corrected thing. -->
+
+- **`courier` can send mail now, and two runbooks said it could not.**
+  `tenant-provisioning` and `secret-rotation` both said *"no provider adapter is
+  configured, so nothing leaves the process"*, and named the Swoosh pipeline and
+  its notification store as the reason. As of `courier` `a8f15cc` the adapter is
+  `COURIER_MAIL_ADAPTER=smtp` with the `COURIER_SMTP_*` variables, it ships
+  `gen_smtp`, and a courier with no adapter configured **refuses to boot** — the
+  fix for a `Swoosh.Adapters.Local` default that accepted every send, wrote an
+  outbox row and published `courier.email.delivered` for mail nobody received.
+
+  The gap that remains is smaller and is now named exactly: **nobody sends
+  `team_invitation`.** `courier` has the template, `identity` has a client for
+  `POST /v1/messages` and sends `password_reset` and `welcome` through it, and
+  the invitation is still one unmade call. So the operator still delivers the
+  token — for a completely different reason than the page gave.
+
+- **Two secrets were missing from the rotation inventory, and both are real.**
+  `secret-rotation` listed an email provider credential as "**n/a yet**" and had
+  no row for a scoped API token at all. Added the SMTP credential (with the full
+  variable table and the refusal that makes it required) and identity's
+  `api_keys` credential, read out of `migrations/00011_api_keys.sql` and the
+  router: the token is returned **once** and only a SHA-256 digest is stored,
+  `expires_at` is required and capped at 365 days by a `CHECK` in the database,
+  and mint/list/revoke are all **owner-only**. Rotation is an issuance rather
+  than a cutover, so both keys are valid at once. Also recorded that
+  `identity.api_key.revoked` covers expiry as well as revocation and **there is
+  no sweeper**, so the expiry half is never emitted.
+
+- **`tenant-provisioning` cited a commit that does not exist.** It claimed every
+  quoted response came from "a real session against `identity` at commit
+  `27fe8a6`". That sha is not in `identity`'s history — `git cat-file` refuses
+  it — and it is a commit in **`caf`**, so the page named the wrong
+  repository's history. Replaced with what is verifiable without re-running
+  anything: the routes, the role minimums and the members-list defect read off
+  `identity` `08e346d`, with an instruction to re-run before relying on it.
+  Step 8 also used `$BOB`, which nothing in the runbook ever set; step 7 now
+  exports it from the one response that carries a `user_id`.
+
+- **`bin/dev up` does not currently start `identity`, `courier` or `billing`, and
+  the site said nothing.** This is the one finding in this packet that is a
+  defect in another repository rather than in the prose, so it is recorded here
+  rather than quietly worked around. All three compose files set
+  `logging.driver: syslog` with `syslog-address: "tcp://otel-collector:15514"`,
+  and **Docker resolves a log-driver address with the host's resolver, not the
+  compose network's** — `otel-collector` exists only inside the network. Run
+  `bin/dev up` and Postgres, NATS, Redis, the collector, Grafana, Tempo, Loki
+  and Mimir all come up healthy, and then:
+
+  ```
+  Error response from daemon: failed to create task for container:
+  failed to initialize logging driver: dial tcp: lookup otel-collector on
+  0.250.250.200:53: no such host
+  ```
+
+  with nothing about the database in it. It reproduces with no cafaye involved
+  at all: `docker run --rm --log-driver syslog --log-opt
+  syslog-address=tcp://otel-collector:15514 alpine:3 echo hi`.
+
+  So the answer to "the port answers nothing" is currently **not** a crash to
+  investigate: there is no container, no log and no readiness body. Both
+  `service-down` and `getting-started` now say so, and point at the fix in the
+  service repositories rather than shipping a workaround as if it were the
+  procedure. `identity`, `courier` and `billing` own this one.
+
+- **A container name is not a service name.** `service-down` told a reader to
+  `docker logs --since 30m "$SERVICE"`. Compose names a container
+  `<project>-<service>-1` and the project here is **not** the repository —
+  `kit`'s stack sets `name: ${KIT_STACK_NAME:-cafaye}`, so `identity` is
+  `cafaye-identity-1` and its database is `cafaye-postgres-1`. `docker logs
+  identity` says `No such container`, which reads like "it is not running" rather
+  than "you named it wrong".
+
 
 - **The backup runbook was a procedure for a toolchain kit deleted.** It told an
   operator to run a script that is not there. kit-20 removed

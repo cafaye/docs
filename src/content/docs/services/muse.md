@@ -70,9 +70,14 @@ secrets](/runbooks/secret-rotation/).
 ## Running it, and running its gate
 
 ```sh
-docker compose up --build           # postgres + the service on :8000
+MUSE_VAULT_KEY=$(uv run python -m muse.vault) docker compose up --build   # postgres + muse on :8000
 MUSE_CORE_SCHEMAS=../core/schemas uv run pytest   # the two core-parity tests
 ```
+
+`muse` owns its own standalone stack — `postgres:17-alpine` published on host
+**5433**, which is why it is the one service that does not collide with anything.
+Compose will not render until `MUSE_VAULT_KEY` is set, and the error names both
+the variable and the command above that generates a valid one.
 
 `bin/prime` runs `uv sync --locked`, ruff, and pytest under a 100% coverage gate.
 It is green without `MUSE_CORE_SCHEMAS`, and that green run has **not** checked

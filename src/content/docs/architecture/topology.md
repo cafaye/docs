@@ -22,18 +22,13 @@ concluding anything from this table about who can see what.
 
 | Service | Language | Container port | Local port | Database | `core:` |
 | --- | --- | --- | --- | --- | --- |
-| `identity` | Go | 8080 | 8080 | Postgres 17, own database **on the shared cluster** | `^0.1.0` |
-| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres 17, own database **on the shared cluster** | `^0.2.0` |
-| `courier` | Elixir | 4000 | 4000 | Postgres 17, own database **on the shared cluster** | `^0.1.0` |
+| `identity` | Go | 8080 | 8080 | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.1.0` |
+| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.2.0` |
+| `courier` | Elixir | 4000 | 4000 | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.1.0` |
 | `darkroom` | Rust | 8080 | 8080 | Postgres 17, own database — **its own container, not the cluster** | `^0.2.0` |
 | `muse` | Python | 8000 | 8000 | Postgres 17, own database — **its own container, not the cluster** | `^0.2.0` |
 | `guard` | TypeScript (Bun) | 8080 | 8080 | **none** — `Map`s and, with `REDIS_URL`, Redis | `^0.1.0` |
 | `parlor` | Next.js | 3000 | 3000 | **none** | *manifest is a pre-`core` draft* |
-
-**Every service is on Postgres 17, and every database has the same name as the
-service that owns it.** `muse` **was** on 18 and was moved down deliberately — one
-platform, one major version, one upgrade path — and its own compose file carries
-the migration note for a developer holding a real 18 data directory.
 
 **The two bolded clauses in the Database column are different arrangements, not
 different wording.** `identity`, `billing` and `courier` reach their database
@@ -44,8 +39,31 @@ database of their own. `darkroom` and `muse` still ship a **complete**
 Postgres that is its own, and neither is on the shared cluster. See [the drift
 audit](#cross-repo-drift-audit) — `kit`'s own fleet gate names both.
 
-Three services want host port **8080** (`identity`, `guard`, `darkroom`), so run
-them one at a time on a laptop.
+**17 is the standard, and the tag you get is not always 17.** `muse` **was** on 18
+and was moved down deliberately — one platform, one major version, one upgrade
+path — and its own compose file carries the migration note for a developer
+holding a real 18 data directory. `darkroom` and `muse` pin `17-alpine`
+literally. **`identity`, `courier` and `billing` pin no tag of their own**,
+because they reach their database through `kit`'s container, and that leaves
+**three** values in play rather than one: kit's compose file writes
+`image: postgres:${KIT_POSTGRES_TAG:-17-alpine}`, the `.env` `bin/dev` creates on
+a first run comes from `kit`'s `.env.example` and sets
+`KIT_POSTGRES_TAG=16.6-alpine`, and `caf dev` renders `postgres:16-alpine`. All
+three are tabulated in [the version skew
+trap](/runbooks/service-down/#step-5--the-postgres-version-skew-trap) and
+explained in [getting started](/getting-started/) — change it in your `.env` if
+you need 17, and do not assume it from the compose file.
+
+**Most databases take the name of the service that owns them, and the exception
+is `darkroom`.** `identity`, `billing` and `courier` each set
+`POSTGRES_DB: <service>`, `muse` sets `POSTGRES_DB: muse`, and `guard` and
+`parlor` have no database at all. `darkroom`'s own stack sets **`POSTGRES_DB:
+darkroom_test`** while its role is `darkroom`, so for that one service the
+database named in the DSN and the role that connects to it are spelled
+differently.
+
+Three services want host port **8080** (`identity`, `guard`, `darkroom`), and two
+want **3000** (`billing`, `parlor`), so run one of each at a time on a laptop.
 
 **Only two services publish a Postgres port on the host:** `darkroom` on `5432`
 and `muse` on `5433`, both as literals. `identity`, `courier` and `billing`
@@ -76,7 +94,8 @@ specs. `caf contract resolve` answers the question per manifest:
 `caf contract resolve '^0.1.0' 0.2.0` → `no`.
 
 `darkroom`'s image is built from **`docker/Dockerfile`**, not `./Dockerfile`, and
-with `--build-arg --features s3` for the deployment build.
+needs no build flags — that file already runs `--features s3`, so the default
+build is the deployment build.
 
 ## Probes
 

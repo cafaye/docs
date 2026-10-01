@@ -8,25 +8,29 @@ who can sign in, and being able to prove both afterwards. This runbook does that
 against `identity`, which is the only service that owns tenancy.
 
 **Every response body and status code in this runbook is quoted from a real
-session** against `identity`, with a real Postgres behind it. Where a step's
+session** against `identity` with a real Postgres behind it. Where a step's
 output is worth checking by eye, the check is the step.
 
-:::caution[The quoted session is older than the code, and the routes have grown]
-A previous version of this page pinned the session to a commit
-(`27fe8a6`) **that no longer exists in `identity`'s history**, so the pin was
-worthless as evidence — a hash you cannot resolve cannot be checked. It is gone
-rather than replaced, because pinning a session to a commit is only honest if
-somebody re-runs it at that commit.
+:::caution[What this page does not pin, and why that is deliberate]
+An earlier version of this page claimed the session was run "against `identity`
+at commit `27fe8a6`". **That commit is not in `identity`'s history** — it is a
+commit in `caf`, and the sentence named the wrong repository's history, which is
+the worst kind of provenance claim because it looks checkable and is not.
 
-What has changed since the transcript was taken is that `identity` has grown
-routes: there are now `/v1/accounts/{accountID}/api-keys`,
-`/v1/accounts/{accountID}/oidc-clients`,
-`/v1/accounts/{accountID}/admin/audit-log` and
-`/v1/accounts/{accountID}/admin/invitation-revocations`. **None of them is on
-this page, and this page is still the procedure for the ones it does cover** —
-the routes below were verified present against the tree as of `08e346d`. Re-run
-it before you rely on a quoted status code, and treat the bodies as the shape
-rather than as a byte-exact contract.
+Naming a commit here would only be honest if somebody re-ran the whole
+procedure against that commit. So this page states the one thing that is
+verifiable without re-running it — the routes, the role order and the refusal
+wording are read from `identity`'s current `master` — and quotes the session as a
+session. **Re-run it against your own build before you rely on a byte of it.**
+[Running the gates](/running-the-gates/) has the commands.
+
+**And the transcript is older than the code.** `identity` has grown routes since
+it was taken: `/v1/accounts/{accountID}/api-keys`,
+`/v1/accounts/{accountID}/oidc-clients`, `/v1/accounts/{accountID}/admin/audit-log`
+and `/v1/accounts/{accountID}/admin/invitation-revocations`. **None of them is
+on this page, and this page is still the procedure for the ones it does cover.**
+Treat the quoted bodies as the shape rather than as a byte-exact contract, and
+re-run before you rely on a quoted status code.
 :::
 
 ## What you need
@@ -213,13 +217,32 @@ HTTP 201
  "expires_at":"2026-10-07T10:51:50.606107+03:00","created_at":"…"}
 ```
 
-**The `token` is in the response body, and `identity` does not mail it.** This is
-the step people expect to be automated and is not. `courier`'s Swoosh pipeline,
-its notification-preference store and its adapter are all built — it ships
-`Swoosh.Adapters.SMTP` and publishes `courier.email.delivered` — but there is no
-code path from `identity` to `courier` for this invitation, and nothing in the
-platform delivers events off a bus. Deliver the token yourself — out of band, to
-the address you just invited, and by a channel you trust.
+**The `token` is in the response body, and it is still yours to deliver.** This
+is the step people expect to be automated and is not, and the reason has moved
+twice — so here is where the chain actually stops today.
+
+**`courier` can send mail.** It used to render messages into memory and return a
+provider-shaped id without opening a socket, which meant a released courier
+accepted every send, wrote an outbox row, published `courier.email.delivered`,
+and mailed nobody. That is fixed: `COURIER_MAIL_ADAPTER=smtp` with
+`COURIER_SMTP_HOST` and the rest is a real relay, and a courier with no adapter
+configured now **refuses to boot** rather than silently discarding what it is
+handed.
+
+**`identity` talks to `courier` — for recovery, not invitations.** It holds a
+client for `POST /v1/messages` and sends `password_reset` and `welcome`. It
+deliberately refuses two messages, because a wrong-but-delivered security notice
+is worse than a loud failure: both halves of an email change are refused, since
+mapping them onto `password_reset` would put "somebody asked to reset the
+password on your account" into the one message a hijacked session cannot get
+past.
+
+**But nobody sends `team_invitation`.** `courier` has that template and
+`identity`'s client can populate it, and `identity` still does not call it — the
+constant exists, with a comment saying so, so the drift test has something to
+compare against. So the gap is not the mail system and not the template — it is
+one unmade call, and nothing in the platform delivers events off a bus to make
+it for you.
 
 **If you *have* configured `courier` with an SMTP adapter, that still does not
 send this.** Two independent reasons, both worth stating so nobody assumes
@@ -227,8 +250,13 @@ configuring the adapter fixed the step: courier's adapter is chosen by
 `COURIER_MAIL_ADAPTER` and courier **refuses to start in production without
 one**, and configuring it does not create a caller. The invitation token is in
 the response body above; that response is the delivery mechanism. See [rotating
-secrets](/runbooks/secret-rotation/#8-the-courier-email-adapter-is-a-deployment-decision)
+secrets](/runbooks/secret-rotation/#6-an-email-provider-credential-in-courier--required-not-optional)
 for what the adapter does and does not switch on.
+
+**So: deliver the token yourself** — out of band, to the address you just
+invited, by a channel you trust. Read it out of the 201, because
+`account_invitations` stores `token_digest` and **there is no column that could
+hold the raw token afterwards** — a database dump yields no usable invitation.
 
 `expires_at` is seven days out. An expired invitation is `410`, and a used one
 is `410`; both mean "ask for a new one", and re-posting to `/invitations` is the
@@ -254,6 +282,13 @@ curl -s -o accept.json -w 'HTTP %{http_code}\n' \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $BTOKEN" \
   -d '{"token":"<the token from step 6>"}'
+```
+
+The `200` body carries the membership's `user_id`, so **keep it** — step 8 needs
+it and this is the only response that has it:
+
+```sh
+export BOB=$(python3 -c 'import json;print(json.load(open("accept.json"))["user_id"])')
 ```
 
 ```
@@ -406,10 +441,11 @@ DSN, which is the one convenience of database-per-service worth having.
 
 | Step | Why not | What to do |
 | --- | --- | --- |
-| The invitation email | `identity` has no caller into `courier`; the token is in the response body | Send the token yourself, out of band |
+| The invitation email | `courier` **can** send and `identity` **can** call it, but nobody sends `team_invitation` — one unmade call, not a missing template and not a missing adapter | Send the token yourself, out of band, from the 201 |
 | A billing customer | `billing` is a separate deployment with its own database | Create plans and customers through `/v1` once you need them — [billing](/services/billing/) |
 | A `guard` role mapping | `guard` verifies tokens; role enforcement is `identity`'s | Nothing. `/v1/*` is bearer-only and `identity` is the authority |
 | Any event delivery | No publisher loop runs | Build the consumer yourself, or read the outbox |
+| Member identifiers from `GET …/members` | Only `role` is populated; `account_id`, `user_id` and `created_at` come back empty | Use step 2 of step 9 — the new member's own token reading the account |
 
 ## Rolling it back
 

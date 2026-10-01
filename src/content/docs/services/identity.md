@@ -182,11 +182,15 @@ goose -dir migrations postgres "$DATABASE_URL" up
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
 
-**The port is the part to get right.** Kit's Postgres is on `15500` by default,
-not 5432, so a DSN written for 5432 either fails or — the worse outcome —
-reaches a *different* Postgres that happens to be listening there, and fails with
-`role "identity" does not exist`, which reads like a missing migration. Read the
-port `bin/dev` prints rather than assuming one.
+**The port is the part to get right.** `identity`'s compose file publishes no
+Postgres host port at all, and the stack `bin/dev` brings up publishes one on
+**15500**, because that is `kit`'s port block and not 5432. A DSN written for
+5432 either fails or — the worse outcome — reaches a *different* Postgres that
+happens to be listening there, and fails with `role "identity" does not exist`,
+which reads like a missing migration. Read the port out of the rendered stack
+with `bin/dev stack` rather than assuming one, and note that `bin/dev` currently
+does not finish for this repository — see [Getting
+started](/getting-started/#step-5--run-a-service-locally).
 
 `gofmt -l .` must print nothing. See [Running the
 gates](/running-the-gates/#identity--needs-a-database-and-migrations-applied).

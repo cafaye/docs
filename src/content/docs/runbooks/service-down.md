@@ -39,14 +39,16 @@ tool against a Kamal deployment you are watching remotely, where the container
 names are prefixed and `kamal` is what addresses them.
 
 Ask the question the caller is asking, from outside. **Note the port collisions
-first**: `identity`, `guard` and `darkroom` all default to 8080, so on a laptop
-the loop below only ever finds one of them. That is why it is written to be
-edited for *your* deployment rather than trusted as a fleet scan.
+first**, because they are not all the same kind: `identity`, `guard` and
+`darkroom` all default to 8080, and `billing` and `parlor` both default to 3000.
+A loop that probes one port twice finds one service and prints it twice, so the
+loop below prints the port next to every answer and is written to be edited for
+*your* deployment rather than trusted as a fleet scan.
 
 ```sh
 for p in 8080:identity 3000:billing 4000:courier 8000:muse 3000:parlor; do
   port=${p%%:*}; name=${p##*:}
-  printf '%-10s ' "$name"
+  printf '%-10s :%s  ' "$name" "$port"
   curl -s -m 5 -o /dev/null -w 'healthz=%{http_code} ' "http://localhost:$port/healthz" 2>/dev/null
   curl -s -m 5 -o /dev/null -w 'readyz=%{http_code}\n'  "http://localhost:$port/readyz" 2>/dev/null \
     || echo " (no answer)"
@@ -55,22 +57,30 @@ done
 # the three that share 8080 - probe them one at a time
 for p in 8080:identity 8080:guard 8080:darkroom; do
   port=${p%%:*}; name=${p##*:}
-  printf '%-10s ' "$name"
+  printf '%-10s :%s  ' "$name" "$port"
   curl -s -m 5 -o /dev/null -w 'healthz=%{http_code} ' "http://localhost:$port/healthz"
   curl -s -m 5 -o /dev/null -w 'readyz=%{http_code}\n'  "http://localhost:$port/readyz"
 done
 ```
 
-:::caution[Only four of the seven have a Compose stack you can bring up on its own]
-`darkroom`, `muse` and `guard` do: each owns a complete `docker-compose.yml` with
-its own `postgres` service, and `docker compose up -d` works there (`muse` needs
-`MUSE_VAULT_KEY` set, or compose refuses to interpolate).
+`parlor` is the odd one in that list: a Next.js frontend with no database and no
+dependency of its own, whose two probes exist to keep a proxy honest. If
+`parlor` and `billing` are both up, **only one of them owns 3000** — and reading
+a 503 there as "`parlor` is failing" is a guess about which process answered.
+`parlor` answers `{"status":"ok","deps":"none"}`; `billing` names its check.
+
+:::caution[Only three of the seven have a Compose stack you can bring up on its own]
+`darkroom`, `muse` and `guard` do: each owns a complete `docker-compose.yml`, and
+`docker compose up -d` works there. `darkroom`'s and `muse`'s carry their own
+`postgres` container (`muse`'s is called `db`); `guard` has no database at all,
+so its file declares one service. `muse` needs `MUSE_VAULT_KEY` set or compose
+refuses to interpolate it, and `darkroom` needs nothing.
 
 **`identity`, `courier` and `billing` do not.** Their `docker-compose.yml` is an
-**override**, not a stack: it carries the service, its database name and its
-crash layer, and it deliberately contains no `image:` on `postgres` because
-kit's fetched stack ships that container. Run alone it fails before it starts
-anything:
+**override**, not a stack: it carries the service, its database name and role,
+and its crash layer, and it deliberately contains no `image:` on `postgres`
+because kit's fetched stack ships that container. Run alone it fails before it
+starts anything:
 
 ```
 service "postgres" has neither an image nor a build context specified: invalid compose project
@@ -119,17 +129,20 @@ Kamal deployment you are watching from somewhere else. Under Kamal the container
 names carry the app and role as prefixes, and `kamal app ps` / `kamal app logs /
 <service>` are the commands that address them by the name you already know.
 
-**And no service repository runs these images today anyway** — that is covered
-in [the backup runbook](/runbooks/backup-and-restore/): only `billing` has a
-`config/deploy.yml` at all, and it is the stock Rails one with its `accessories:`
-block commented out. So "the deployment" is presently a container you started
-yourself, which is what makes the local commands the right ones and the Kamal
-ones the shape to learn.
+**And nothing in the fleet is deployed through it yet** — that is covered in [the
+backup runbook](/runbooks/backup-and-restore/). Three repositories carry a
+`config/deploy.yml`: `identity` and `courier` have adopted kit's template (and
+changed its `/up` proxy healthcheck to `/readyz` while they were there), and
+`billing`'s is the stock Rails-generated file from its first commit with the whole
+`proxy:` and `accessories:` blocks commented out. What **no** repository has is
+`bin/drill`, and no `config/kamal-backup.yml` has ever run anywhere. So "the
+deployment" is presently a container you started yourself, which is what makes
+the local commands the right ones and the Kamal ones the shape to learn.
 :::
 
 **Did it fail to start?** Every service validates its environment at startup and
 **fails rather than falling back to a default**, so a typo in a deployment is a
-crash with a message, not a service listening on the wrong port. The two you
+crash with a message, not a service listening on the wrong port. The ones you
 will actually hit:
 
 - `muse` refuses to start without `MUSE_VAULT_KEY`, or with one that is not
@@ -140,6 +153,15 @@ will actually hit:
   a real `DARKROOM_S3_REGION` on an R2 endpoint, or `region=auto` with no
   `DARKROOM_S3_ENDPOINT`, which would otherwise resolve `s3.amazonaws.com` and
   put your media in a bucket you did not choose.
+- `courier` refuses to start **in production** unless `COURIER_MAIL_ADAPTER` is
+  set to an adapter that can actually deliver, and refuses a secret box it does
+  not have: `COURIER_SECRET_BOX_KEY` missing, or `COURIER_MAIL_ADAPTER` unset,
+  or named `local`/`test`. **This refusal is the feature.** The adapter it
+  replaced rendered messages into memory and returned a provider-shaped id
+  without opening a socket, so a released courier accepted every send, wrote an
+  outbox row, published `courier.email.delivered`, and mailed nobody — no error
+  and no warning. A deploy that fails at boot is the cheapest version of that
+  incident. Full list in [rotating secrets](/runbooks/secret-rotation/).
 
 **Is it listening on the port you are probing?** `identity`, `guard` and
 `darkroom` all default to 8080, and the image listens on what `PORT` says. A
@@ -304,50 +326,162 @@ psql "$DATABASE_URL" -c 'select version();'
 docker exec <pg-container> psql -U <superuser> -d postgres -c 'select version();'
 ```
 
-**Every service is on `postgres:17` now, and one used to say otherwise.**
-`identity`, `courier`, `darkroom`, `billing` and `muse` all run
-`postgres:17-alpine`; kit's own stack defaults to `17-alpine` too. `muse` **was**
-on `postgres:18` and was moved down to 17 deliberately — a one-deploy-many-services
+**Every service repository pins Postgres 17, and one used to say otherwise.**
+`darkroom`, `muse` and — through `kit`'s stack — `identity`, `courier` and
+`billing` all resolve to a 17-series image by declaration. `muse` **was** on
+`postgres:18` and was moved down deliberately: a one-deploy-many-services
 platform that carries two major versions carries two upgrade paths and a dump
 from `muse` that will not restore into any other service's database. **If you
 find a `DATABASE_URL` pointing at a Postgres 18 that you did not choose, that is
-the thing to look at.** Note also that `muse` carries its own migration note:
+the thing to look at.** Note also that `muse` carries its own migration note —
 Postgres majors have incompatible on-disk formats, so a developer with a real 18
 data directory needs `pg_dump`/`pg_restore` or `docker compose down -v` first,
 and 17 refuses such a directory verbatim rather than corrupting it.
 
-**A host-side DSN can silently reach the *wrong* Postgres.** This is the trap
-worth knowing, and the port arithmetic is not what this page used to say it was:
+**But the declaration is not what you get, and that is the half worth
+remembering.** A `DATABASE_URL` pointing at the wrong server is a 503 from
+readiness and a `role "…" does not exist` from `psql` — and the second message is
+the one that tells you the port or the role is wrong, while the **first** tells
+you nothing.
 
-| Repository | Publishes a host Postgres port? | On which |
+| Where | Image | How it was checked |
 | --- | --- | --- |
-| `darkroom` | **yes** | `5432:5432`, a literal in its own stack |
-| `muse` | **yes** | `5433:5432`, a literal, published so `psql` can apply migrations |
-| `identity`, `courier`, `billing` | **no** | they publish no Postgres port at all; the database is reachable over the compose network by service name, and `kit`'s fetched stack publishes its own on `${KIT_POSTGRES_PORT:-15500}` |
+| `darkroom`'s own stack | `postgres:17-alpine` | its compose file |
+| `muse`'s own stack | `postgres:17-alpine` | its compose file — it moved off 18 onto the fleet standard |
+| **`kit`'s stack, as `bin/dev up` actually starts it** | **`postgres:16.6-alpine`** | ran it; the container reports `16.6-alpine` |
+| what `caf dev` renders | `postgres:16-alpine` | `caf dev --dry-run` on `identity` |
 
-So the collision that bites is **two host-published ports against one native
-Postgres**, and it is `darkroom`'s 5432 that conflicts with a local install —
-not four repositories fighting over it. `darkroom`'s own README carries the
-warning, and its symptom is the misleading part: the container comes up
-**healthy** (its healthcheck is `pg_isready`, which reports a server accepting
-connections and does not authenticate) while the suite fails with
-`role "darkroom" does not exist`, which reads like a missing migration.
+That third row is the one that bites. `kit`'s compose file writes
+`image: postgres:${KIT_POSTGRES_TAG:-17-alpine}` — so 17 is the *default* — but
+the `.env` that `bin/dev up` creates on a first run comes from `kit`'s
+`.env.example`, and that file sets **`KIT_POSTGRES_TAG=16.6-alpine`**. The
+default in the compose file is not the version you get.
 
-**There is no `POSTGRES_PORT` to set.** A previous version of this page told you
-to remap with `POSTGRES_PORT=5433 docker compose up -d`. **No service
-repository reads that variable** — the only `POSTGRES_PORT` in the fleet is in
-`identity`'s `gate.yml` prose and `parlor`'s e2e stack's own
-`E2E_IDENTITY_POSTGRES_PORT`. The variable that exists is **`KIT_POSTGRES_PORT`**,
-and it belongs to **kit's stack**, in kit's `.env`, not to a service's file: a
-service's own `docker-compose.yml` may not move it, because a second compose
-file's `ports:` list is *appended* rather than substituted. So the remedies that
-actually work are:
+**Why it matters beyond tidiness:** `pg_dump` refuses to dump from a server
+newer than itself, and silently produces a subtly wrong dump against a much older
+one. So a modern local `pg_dump` pointed at the 16.6 the stack hands you is the
+*silent* direction, not the loud one. Check both numbers rather than assuming
+they agree — `select version()` through the service's own `DATABASE_URL`, and
+`pg_dump --version` on whatever is doing the dumping.
 
-- **run the services one at a time**, which is what the port layout above makes
-  necessary anyway; or
+### Where each service's Postgres actually is
+
+This is the table the rest of this section was getting wrong, so it is the
+table to read. **It is not one Postgres per service**, and the difference
+between the two groups is the whole reason two stacks collide:
+
+| Service | How its stack is built | Postgres on the host |
+| --- | --- | --- |
+| `identity`, `courier`, `billing` | an **override** on `kit`'s stack, run with `bin/dev` | **15500** — `kit`'s container, one per project |
+| `darkroom` | a standalone compose file that owns its Postgres | **5432** |
+| `muse` | a standalone compose file that owns its `db` | **5433** |
+| `guard`, `parlor` | no database at all | — |
+
+**The consequence is a container collision, not a port collision.** The first
+three share one Postgres container, and each one renames that container's
+database: `identity` sets `POSTGRES_DB: identity`, `courier` sets
+`POSTGRES_DB: courier`, `billing` sets `POSTGRES_DB: billing`. Compose merges
+those environment overrides **last-one-wins**, so bringing two of them up in one
+project silently gives both services a DSN pointing at whichever database won.
+Measured, merging `identity`'s and `courier`'s compose files over `kit`'s:
+
+```
+  postgres:
+    environment:
+      POSTGRES_DB: courier          # identity's `identity` is simply gone
+      POSTGRES_USER: courier
+      POSTGRES_PASSWORD: courier
+```
+
+`identity` then answers `role "identity" does not exist`, and it looks exactly
+like a bad password. **So: run one of `identity`, `courier` and `billing` at a
+time**, and stop one with `bin/dev down` before starting the next.
+
+`darkroom` on 5432 and `muse` on 5433 are genuinely separate containers and can
+run alongside anything. If a host port bind fails, the message names which
+service and which port — read it rather than assuming 5432 is occupied.
+
+:::caution[`POSTGRES_PORT` is not a thing any more]
+An older version of this page told you to move a service's Postgres with
+`POSTGRES_PORT=5433 docker compose up -d`. **No compose file in the fleet reads
+that variable** — the only `POSTGRES_PORT` anywhere is inside `identity`'s
+`gate.yml` prose and `parlor`'s e2e stack's own `E2E_IDENTITY_POSTGRES_PORT` —
+and there is no repository that publishes a Postgres host port you can move with
+it anyway. The variable that exists is **`KIT_POSTGRES_PORT`**, it is `kit`'s
+rather than a service's, it defaults to `15500`, and it is set in your `.env` —
+not on the command line, and not per service. A service's own compose file may
+not move it, because a second compose file's `ports:` list is *appended* rather
+than substituted.
+
+So the remedies that actually work are:
+
+- **run the services one at a time**, which the table above makes necessary
+  anyway; or
 - **change kit's `KIT_POSTGRES_PORT`** in the `.env` `bin/dev` writes on first
   run, which moves the shared container and leaves the service files alone; or
-- for `darkroom` specifically, stop whatever holds 5432 before bringing it up.
+- for `darkroom` specifically, **stop whatever holds 5432** before bringing it
+  up. `darkroom`'s own README carries that warning, and its symptom is the
+  misleading part: the container comes up **healthy** (its healthcheck is
+  `pg_isready`, which reports a server accepting connections and does not
+  authenticate) while your command reaches the *other* database and fails with
+  `role "darkroom" does not exist`, which reads like a missing migration.
+:::
+
+**If a stack did not come up at all,** the failure is almost never the
+database. `identity`, `courier` and `billing` cannot be started with a bare
+`docker compose up`, because their compose files are overrides on `kit`'s and
+contain no Postgres image of their own:
+
+```
+service "postgres" has neither an image nor a build context specified: invalid compose project
+```
+
+Use `bin/dev`. Two services also refuse to render at all until a required secret
+is set, and that refusal is the correct message rather than a missing default:
+`courier` needs `COURIER_SECRET_BOX_KEY` and `muse` needs `MUSE_VAULT_KEY`.
+[Getting started](/getting-started/) has the per-service command that works.
+
+:::caution[`bin/dev` brings the infrastructure up and then fails on those three services]
+**This is a real, reproduced failure, and it is in the three repositories' own
+compose files rather than in `kit`.** All three of `identity`, `courier` and
+`billing` set their container log driver to syslog pointing at the collector —
+quoted from `identity`'s compose file:
+
+```
+logging:
+  driver: syslog
+  options:
+    syslog-address: "tcp://otel-collector:15514"
+    tag: "identity"
+```
+
+**Docker resolves a log-driver address with the host's resolver, not the compose
+network's.** `otel-collector` only exists inside the network, so the driver
+cannot reach it and the container never starts. Every other container in the
+stack comes up healthy first — Postgres, NATS, Redis, the collector, Grafana,
+Tempo, Loki, Mimir — and then this, with nothing about the database in it:
+
+```
+Error response from daemon: failed to create task for container:
+failed to initialize logging driver: dial tcp: lookup otel-collector on
+0.250.250.200:53: no such host
+```
+
+It is not a cafaye configuration problem, and it does not need cafaye to
+reproduce:
+
+```sh
+docker run --rm --log-driver syslog \
+  --log-opt syslog-address=tcp://otel-collector:15514 alpine:3 echo hi
+```
+
+**So today the infrastructure is up and the service is not, and the port answers
+nothing.** Do not read that as "the service crashed": there is no container to
+crash, no log to read and no readiness body to interpret. Read this message, or
+start the service with the `logging:` block removed from a local copy of the
+compose file. **A finding against `identity`, `courier` and `billing`, not a
+workaround to keep.**
+:::
 
 ## What not to do
 
@@ -384,10 +518,21 @@ docker logs --since 30m "$SERVICE" 2>&1 | tail -200
 psql "$DATABASE_URL" -c "select now(), pg_is_in_recovery();"
 ```
 
+**`$SERVICE` is not the container name**, and that is a quiet trap rather than a
+loud one. Compose names a container `<project>-<service>-1`, and the project is
+not the repository: `kit`'s stack sets `name: ${KIT_STACK_NAME:-cafaye}`, so
+`identity` run through `bin/dev` gives you **`cafaye-identity-1`** and its
+database is **`cafaye-postgres-1`**. `docker logs identity` says `No such
+container`, which reads like "it is not running" rather than "you named it
+wrong". Resolve it first:
+
+```sh
+docker ps -a --filter "name=$SERVICE" --format '{{.Names}}'
+```
+
 On a machine you are SSH'd into, the two `docker` lines are the ones to swap for
 `kamal app ps` and `kamal app logs / $SERVICE`; the three `curl`/`psql` lines are
 the same either way.
-
 Then, for `identity` and `billing`, the outbox age — the one number that says
 whether events are piling up:
 

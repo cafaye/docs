@@ -102,6 +102,20 @@ Or run the service on the host against a database you already have —
 `mix phx.server`, with `COURIER_SECRET_BOX_KEY` set. Note also that
 `docker compose` refuses to interpolate without `COURIER_SECRET_BOX_KEY`, so that
 error can be what you see first rather than the missing `postgres` image.
+
+**Three things have to be true before that command does anything, and the second
+one is measured rather than documented.** `COURIER_SECRET_BOX_KEY` is
+interpolated with `:?`, so compose will not render without it. And
+`bin/dev` currently does not finish for this repository, for the reason in
+[Getting started](/getting-started/#step-5--run-a-service-locally). Separately,
+the **service** also refuses to boot without `COURIER_INBOUND_RESEND_SECRET`,
+which `config/runtime.exs` raises on — that is a boot-time refusal rather than an
+interpolation one, so it looks different from the other.
+
+The database is `kit`'s container, not `courier`'s: an **override** rather than a
+whole stack, so plain `docker compose up` fails with *"service \"postgres\" has
+neither an image nor a build context specified"* and `bin/dev` is the command that
+composes the two files.
 :::
 
 | Probe | Meaning | 503 body |
@@ -119,17 +133,23 @@ queue backpressure, not the query timeout. An orchestrator with a shorter timeou
 times out and reaches the same verdict the slower way, which is to restart a
 service that is answering correctly.
 
-Migrations run through `bin/migrate`, which is `Courier.Release.migrate/0`. The
-compose stack has no migrate service yet, so run it as a deploy job.
+Migrations are `mix ecto.migrate`, which is also what `bin/dev` falls back to
+here — this repository ships no `bin/migrate`, and `bin/prime` runs `mix
+ecto.setup`, which creates *and* migrates in one step. The compose stack has no
+migrate service, so on a deploy it is a job.
 
 ## The gate
 
-`bin/prime` needs a Postgres at `localhost:5432` as `postgres`/`postgres`. **`bin/prime`
-does not start one for you**, and there is no `db` service in this repository's
-compose file to start — the service is called `postgres`, it belongs to kit's
-stack, and it is published on `KIT_POSTGRES_PORT` (default `15500`), not 5432.
+`bin/prime` needs a Postgres it can reach, and **`bin/prime` does not start one
+for you**. There is no `db` service in this repository's compose file to start:
+the service is called `postgres`, it belongs to `kit`'s stack, and it is
+published on `KIT_POSTGRES_PORT` (default `15500`), **not 5432**. So
+`docker compose up -d db` cannot resolve on two counts — the service is named
+`postgres`, and it belongs to another file.
 
-So point `bin/prime` at a database rather than expecting one to appear:
+Bring the stack up, then read the DSN out of the rendered file rather than
+assuming a port; `bin/dev stack` prints the merged compose and `bin/dev` prints
+the URLs:
 
 ```sh
 bin/dev                             # bring up kit's stack, including Postgres
@@ -139,7 +159,8 @@ mix precommit                       # warnings-as-errors, unused deps, format, t
 
 or set the test DSN to a Postgres you already run. Read the variable names out of
 `gate.yml` rather than assuming — the failure mode of guessing is a suite that
-passes against the wrong server.
+passes against the wrong server, and a DSN aimed at a native Postgres on 5432
+fails as `role "courier" does not exist`, which reads like a missing migration.
 
 - **Repository:** [github.com/cafaye/courier](https://github.com/cafaye/courier)
 - **Language:** Elixir

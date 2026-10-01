@@ -111,12 +111,17 @@ failure is how a healthy service generates work:
 Not `billing`'s problem. Check, in order:
 
 1. **The endpoint URL** in the Stripe dashboard resolves and terminates TLS.
-   The services bind plain HTTP; TLS is the edge's job.
+   The services bind plain HTTP; TLS is the edge's job — and in a Kamal
+   deployment `proxy.ssl: true` in `config/deploy.yml` is what terminates it.
 2. **The endpoint is enabled** in Stripe, and pointed at the environment you
    think it is. Staging and production endpoints are separate objects.
 3. **`STRIPE_WEBHOOK_SECRET` matches.** See case 2.
-4. **Firewall / security group.** `billing`'s port is 3000 in development and 80
-   in the image (`EXPOSE 80`); the compose stack publishes neither by default.
+4. **Firewall / security group, and the port the image is actually on.** `billing`
+   listens on **3000** under the local stack and **80** in the container image —
+   its `Dockerfile` declares `EXPOSE 80`, and the local compose file overrides
+   the environment with `PORT: "3000"` and publishes `3000:3000`. So which port
+   your firewall needs depends on how you are running it, and the answer is not
+   the same in both.
 
 :::caution[Scope: `billing` is not in launch scope, and this page is written against a stack nobody has deployed]
 Everything here describes code that exists and is tested. **It is not a
@@ -125,12 +130,17 @@ description of a running deployment**, for two reasons worth keeping separate:
 - **`billing` is out of launch scope.** A page that reads like an operator's
   reference for a service that is not shipping is how a confident-but-wrong
   document gets written, so the status line is here rather than implied.
-- **No repository has adopted kit's Kamal configuration.** Only `billing` has a
-  `config/deploy.yml` at all, and it is the stock Rails-generated file with its
-  `accessories:` block commented out. There is therefore no accessory, no
-  published port and no TLS termination story to check against — which is why
-  step 1 above is written as "does the endpoint answer at all" rather than as a
-  recipe against a known topology. See [backup and
+- **No repository has adopted kit's Kamal configuration as a deployment.**
+  `kit/templates/kamal/` ships `deploy.yml.erb`, `kamal-backup.yml.erb` and
+  `drill.sh`; **`identity` and `courier` have adopted both `config/deploy.yml`
+  and `config/kamal-backup.yml`** — as of 2026-10-01, and both changed the
+  template's `/up` proxy healthcheck to `/readyz` while they were there. What is
+  adopted **as a deployment** is nothing: `bin/drill` exists nowhere in the
+  fleet, and `billing`'s `config/deploy.yml` is the stock Rails-generated file
+  from its first commit with the whole `proxy:` block commented out. There is
+  therefore no accessory, no published port and no TLS termination story to check
+  against — which is why step 1 above is written as "does the endpoint answer at
+  all" rather than as a recipe against a known topology. See [backup and
   restore](/runbooks/backup-and-restore/) for the measured version of that gap.
 
 What that means for you, concretely: the SQL and the status-code table are
