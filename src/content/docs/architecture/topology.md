@@ -88,6 +88,7 @@ wrong port.
 | `PORT` | `8080` | TCP port to bind. Must be 1–65535. |
 | `DATABASE_URL` | *unset* | Postgres DSN. **Optional**: unset means no pool and no readiness dependency, and the `/v1` routes are not registered at all. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
+| `IDENTITY_OTEL_ENDPOINT` | `http://otel-collector:4318` | Where traces go. Set it to any OTLP endpoint — the shipped collector, Datadog, Honeycomb, Grafana Cloud — and it wins. `OTEL_EXPORTER_OTLP_ENDPOINT` is honoured as a fallback, and `OTEL_SDK_DISABLED=true` or any `OTEL_*_EXPORTER=none` is a genuine no-op. |
 
 ### guard
 
@@ -125,6 +126,7 @@ shared and durable. It does **not** make browser sessions shared: the
 | `STRIPE_WEBHOOK_SECRET` | — | The Stripe endpoint signing secret. |
 | `STRIPE_WEBHOOK_SECRETS` | — | **Comma-separated list** of signing secrets, tried in order. This is the rotation path; see [rotating secrets](/runbooks/secret-rotation/). |
 | `STRIPE_WEBHOOK_TOLERANCE` | `300` | Signature timestamp tolerance, in seconds. |
+| `BILLING_OTEL_ENDPOINT` | `http://otel-collector:4318` | Where traces go. Any OTLP endpoint; unset means the shipped collector. The exporter itself is named by Rails configuration, not by an environment variable, and an unrecognised name is a boot error rather than a silent default. |
 
 With none of the `STRIPE_WEBHOOK_*` variables set, the webhook endpoint
 answers **503**, not 400. Telling Stripe its signature is bad when the service
@@ -139,6 +141,7 @@ cannot check it at all sends an operator looking in exactly the wrong place.
 | `MUSE_ROUTES_FILE` | — | Path to the routing table. |
 | `MUSE_ENV` | — | Environment name. |
 | `MUSE_CORE_SCHEMAS` | — | Path to core's schemas, for contract validation. |
+| `MUSE_OTEL_EXPORTER_OTLP_ENDPOINT` | — | Where traces go. **This is the OTel standard spelling, not core's `<SERVICE>_OTEL_ENDPOINT` contract** — a recorded drift, and the only service that reads it that way. |
 
 Generate a vault key with the module's own entry point:
 
@@ -170,6 +173,42 @@ error is a credential in whatever the operator pastes the error into.
 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are the AWS SDK's own chain, and
 an R2 API token has exactly those two halves — so no cafaye-specific credential
 variable exists for object storage.
+
+### courier
+
+`courier`'s own configuration is not on this page and this packet did not add
+it; the telemetry variables it reads are, because they are the ones that decide
+where a span goes.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `COURIER_OTEL_ENDPOINT` | `http://otel-collector:4318` | Where traces go. `OTEL_EXPORTER_OTLP_ENDPOINT` is the fallback, and the cafaye name wins when both are set. |
+| `COURIER_TENANT_ID` | *unset* | Put on the **resource**, not on a measurement. It is exempt from OpenTelemetry's 2000-attribute-combination cap, which is the point: a tenant on a measurement makes every per-tenant breakdown silently undercount. |
+
+### Telemetry, across the fleet
+
+One variable per service, and it is the whole contract between a service and an
+observability backend.
+
+| Variable | Read by | Default | Emits |
+| --- | --- | --- | --- |
+| `COURIER_OTEL_ENDPOINT` | `courier` | `http://otel-collector:4318` | traces |
+| `BILLING_OTEL_ENDPOINT` | `billing` | `http://otel-collector:4318` | traces |
+| `IDENTITY_OTEL_ENDPOINT` | `identity` | `http://otel-collector:4318` | traces |
+| `MUSE_OTEL_EXPORTER_OTLP_ENDPOINT` | `muse` | *unset* | traces |
+| — | `darkroom`, `guard`, `parlor` | — | nothing |
+
+**Unset does not mean off for the first three, and that is deliberate.** The
+default is the collector that ships with the stack, so a developer sees real
+traces with nothing switched on; a self-hoster who already runs a backend sets
+the variable and the shipped stack goes quiet.
+The two kill switches are the OpenTelemetry specification's own —
+`OTEL_SDK_DISABLED=true`, or any of `OTEL_TRACES_EXPORTER`,
+`OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` set to `none` — and the services
+read those rather than reimplementing "disabled" in four languages.
+**No collector is deployed in any environment**, so a service started from its
+own `docker-compose.yml` is exporting to a host that is not there; see
+[Observability](/observability/) for the three states and `bin/dev`.
 
 ## HTTP surfaces
 
@@ -360,7 +399,7 @@ the reason one of the [runbooks](/runbooks/) reads the way it does.
 | **No vault key rotation.** `key_version` exists in the table and is always 1. | `MUSE_VAULT_KEY` cannot be rotated in place. See [rotating secrets](/runbooks/secret-rotation/) for what that means today. |
 | **`courier` publishes one event.** Only `courier.email.delivered`. The other four declared types need a provider webhook that is a later packet. | A bounced or complained address is not yet visible anywhere, and suppression is not yet automatic. |
 | **`parlor`'s manifest does not validate,** and there is no admin surface and no Playwright suite. | `caf contract lint` is red on it, and the shell is not a finished template to clone. |
-| **No collector and no observability stack.** The telemetry contract is shipped; nothing is deployed to receive it. | There is no shared error dashboard, and `error.type` is not yet a cross-service grouping key. See [Observability](/observability/). |
+| **No collector is deployed.** `courier`, `billing`, `identity` and `muse` each export traces, and nothing is running to receive them. The stack is shipped by `kit` and `bin/dev` runs it, so the gap is a deployment step rather than a missing component. | You have no fleet-wide trace or error view until you run it. `muse` is not on core's `error.type` vocabulary, so do not group a cross-service error panel on that attribute. See [Observability](/observability/). |
 | **No TLS termination in the services.** | `identity` binds plain HTTP. Terminate TLS at the edge, and note that `guard`'s default issuer is already an `https://` origin. |
 
 ## Cross-repo drift audit

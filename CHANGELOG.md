@@ -8,7 +8,93 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The site told buyers we have no observability, and `core`'s own record said
+  the same thing.** Four pages carried a sentence that was false: *"Exactly one
+  service exports any signal at all: `muse`"* (`observability.md`),
+  *"`muse` is also the only service in the fleet that exports any telemetry"*
+  (`services/muse.md`, `services/index.md`), and *"`muse` is the only service in
+  the fleet that exports any signal"*
+  (`security.md`). **`courier`, `billing` and `identity` each wire an
+  OpenTelemetry SDK and export traces from their own code** — courier configures
+  a batch processor over an OTLP exporter and installs its own span processor
+  because the Erlang SDK cannot start one, billing installs a tracer provider
+  with a request middleware, identity builds a batched tracer with retry and
+  sending queue explicitly off. The record that said otherwise was
+  `core`'s `fleet.yml`, which read `signals: []` for all three, transcribed on
+  2026-09-30; the three SDKs landed on 2026-10-01 and nothing re-read them.
+
+  `observability.md` now separates the three states the old sentence collapsed —
+  **spec'd**, **instrumented**, **deployed** — in a table a reader can check
+  row by row, with `core`'s `fleet.yml` named as the machine-readable version.
+  Four services export traces; **none is deployed anywhere**, and that true
+  negative is now stated as the narrow thing it is rather than as the whole
+  story.
+
+  Two more claims on the same page were false in the other direction, and both
+  understated something real. *"the collector template ships with only the
+  `debug` exporter, so a developer's laptop cannot send a span anywhere on its
+  own"* is wrong: kit's collector fans out to Tempo, Mimir and Loki, and
+  `tests/stack_live_test.sh` brings the fetched stack up, sends real OTLP and
+  reads a trace back out of Tempo. And *"There is no shared error dashboard"* is
+  wrong: kit provisions *cafaye — every error in the fleet*, twelve panels,
+  grouped on span status. What does not exist is a dashboard maintained against
+  a real incident, and that is what the page now says.
+
+  The same denial was repeated in `getting-started.md`,
+  `architecture/index.md`, `architecture/topology.md`, `security.md` and
+  `pilot.md`, and all five are corrected. `topology.md`'s environment tables
+  listed **no** `<SERVICE>_OTEL_ENDPOINT` at all, on a page whose job is "the
+  variables each service actually reads"; there is now a per-service row and a
+  fleet-wide one, and `darkroom` is named for what it actually does — the Rust
+  `tracing` facade with its own `trace_id` in a task-local and no exporter, so
+  its log records reach Loki through the collector's stderr receiver without an
+  OTLP span existing.
+
+  **One adjacent false claim found while verifying, in the same family.** `pilot.md`
+  said `identity` *"is the only service with no dependency on another cafaye
+  service"*. `darkroom` declares no dependencies either, and `courier` and
+  `billing` declare empty lists, so the sentence was false in the way this packet
+  is about: a uniqueness claim on one service that the fleet record contradicts.
+  All four manifests were read to correct it.
+
+  **One real drift found while checking, and recorded rather than smoothed over:
+  `billing`'s `error.type` vocabulary is three values of its own**
+  (`unhandled_exception`, `routing_error`, `middleware_error`) and **none of the
+  three is in core's thirteen**, so a billing error span would fail core's
+  `traces.schema.json`. `courier` and `identity` both carry all thirteen.
+  `muse` still emits an exception class name. The `error.type` section now
+  states which is which instead of "no service has been migrated", and the fix
+  belongs to `billing`'s repository.
+
 ### Added
+
+- **A check that the per-service telemetry table cannot drift from `core`.** The
+  contract tier now reads `core`'s `fleet.yml` and asserts the table agrees in
+  both directions — a service core records as exporting traces must be
+  instrumented in the table, **and** a service the table calls instrumented must
+  be one core records as exporting. The second direction is the one that catches
+  this packet's subject: a table claiming a capability the fleet record does not
+  have. It also fails if any row claims a service is **deployed**, and it flags
+  any page asserting that one service is the only one exporting telemetry while
+  core records four — which is the sentence three pages carried. That scan
+  reports **8 offenders on the text before this commit and 0 after**.
+
+  It was shown red before it was made green: run against a `core` that still has
+  the old `signals: []`, it names all three services and the disagreement. The
+  `core` version it reads is whichever `CORE_PATH` points at, so a stale sibling
+  checkout makes this red rather than quietly blessing the table.
+
+- **The contract tier's test count in CI is read, not written.** The `contracts`
+  job's notice said `5 tests` while the tier held six — the same failure as a
+  copied table, a number beside the thing it describes going stale in silence.
+  It is now read out of the log by name, as the `gate` job's suite-size guard
+  already does, and a missing count is an error rather than a zero.
+
+- **`AGENTS.md`** records the new contract-tier check in both places that
+  describe it, because a check this file does not mention is a check the next
+  reader does not know exists.
 
 - **`pricing.md`, `licensing.md`, `security.md`** — the three pages a stranger
   evaluating a purchase had no way to find, in one sidebar group

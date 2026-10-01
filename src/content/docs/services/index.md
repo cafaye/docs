@@ -18,7 +18,7 @@ truth, not hedging.
 | [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, the subscription lifecycle, webhooks in and out |
 | [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 — email pipeline, preferences, Oban outbox worker, signed outbound webhooks. Publishes one event |
 | [darkroom](/services/darkroom/) | Media uploads, variants, object storage | Rust | v0 — signed uploads, tenant isolation, variants, S3 **and Cloudflare R2** |
-| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth verifies the token against identity's JWKS. **The only service exporting telemetry** |
+| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth verifies the token against identity's JWKS. **The first service to export traces**, and not on core's `error.type` vocabulary |
 | [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — real auth, API keys, Redis-backed limits, **no routing** |
 | [parlor](/services/parlor/) | App shell template + admin | Next.js | In progress — accounts, invitations, billing screens. **No admin surface, no e2e suite** |
 

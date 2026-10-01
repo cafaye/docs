@@ -10,15 +10,17 @@ Python library — using it natively means one model of the domain (the OpenAI,
 Anthropic, and Bedrock request/response shapes) instead of a hand-written port
 of it.
 
-:::caution[Status: v1 core — routing, vault, metering, and the only exporter in the fleet]
+:::caution[Status: v1 core — routing, vault, metering, and one of four exporters in
+the fleet]
 Provider adapters, the encrypted credentials vault, routing with fallback, token
 metering, and the HTTP surface are **done and tested**. `POST /v1/route` serves a
 completion from the first candidate provider that works; the vault is AES-256-GCM
 under `MUSE_VAULT_KEY` with the provider name as additional authenticated data.
 
-**`muse` is also the only service in the fleet that exports any telemetry** —
-traces, and nothing else. It is the reason core's redaction boundary is not
-theoretical. Two things follow that are easy to miss:
+**`muse` exports traces, and so do `courier`, `billing` and `identity`.** It was
+the first to, which is why it is the reason core's redaction boundary is not
+theoretical — and why it is the one a later reader will find an exception in. Two
+things follow that are easy to miss:
 
 - **A guard keeps the exporter out of the image.** The OTel exporter is not a
   default dependency, so a build that does not ask for it cannot ship one. That is
@@ -27,8 +29,11 @@ theoretical. Two things follow that are easy to miss:
 - **`error.type` is not migrated.** `muse` still emits
   `error.type = "ProviderAuthError"` — a per-service exception class name — and
   its own test asserts that exact string. Core is closing the vocabulary into a
-  bounded enum; migration is a later packet. **Do not group on `error.type`
-  across services yet.** See [Observability](/observability/#errortype).
+  bounded enum; migration is a later packet. `courier` and `identity` already
+  carry core's thirteen, so **do not group on `error.type` across all services
+  yet** — a panel that is full for two and empty for this one reads as "no
+  errors in `muse`", which is the worst possible reading of a real error. Group
+  on the span status instead. See [Observability](/observability/#errortype).
 
 **Not in this version:** streaming, tool calls, embeddings, images, batches, and
 a real admin UI. And the `muse.tokens.consumed` event it writes to `outbox_events`

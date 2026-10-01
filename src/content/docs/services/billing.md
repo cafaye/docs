@@ -23,9 +23,27 @@ processor and return the row unchanged. **The row moves when
 `customer.subscription.*` arrives**, and the three subscription events are
 published in the same transaction as that move.
 
+**`billing` exports traces.** An outermost request middleware opens the span
+and a simple span processor exports it, deliberately: this service's request
+volume is a Stripe webhook and a handful of reads, and a synchronous export
+costs a failed export rather than a slow request. `BILLING_OTEL_ENDPOINT` is the
+whole contract; the exporter is named by Rails configuration, and an
+unrecognised name is a boot error rather than a silent default. Traces only —
+no meter is installed.
+
+**One real drift, recorded rather than glossed.** `billing`'s `error.type`
+vocabulary is three values of its own — `unhandled_exception`, `routing_error`,
+`middleware_error` — and **none of the three is in `core`'s thirteen**, so a
+billing error span would fail `core`'s `traces.schema.json`. A value outside the
+list is dropped rather than recorded, which is the safe failure and still a
+failure. This service's repository owns the fix; it is recorded in `core`'s
+`fleet.yml` rather than fixed from here.
+
 **Not built:** the customer portal, refunds, proration arithmetic in this service,
 and a usage-events API. **And no publisher loop reaches a bus** — events land in
 `outbox_events` and are delivered to nobody.
+**And no collector is deployed anywhere**, so the spans `billing` exports have
+nowhere to land until you run the stack. See [Observability](/observability/).
 :::
 
 ## Money is integers, and the refusals are the feature

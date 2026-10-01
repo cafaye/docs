@@ -419,7 +419,18 @@ jobs:
             echo "  construction — every assertion in it fails rather than skipping." >&2
             exit 1
           fi
-          echo "::notice::the contract tier ran: 5 tests, 0 skipped"
+          # The count is READ, not written here. This notice said "5 tests" while
+          # the tier held six, which is the same failure as a copied table: a
+          # number beside the thing it describes, going stale in silence. Read by
+          # name, the way the gate job's suite-size guard does, and a missing line
+          # is an error rather than a zero.
+          count="$(grep -E '^# tests [0-9]+$' "$LOG" | tail -1 | awk '{print $3}')"
+          if [ -z "$count" ]; then
+            echo "::error::no test count in $LOG — this notice read nothing, which is not a report." >&2
+            tail -20 "$LOG" >&2 || true
+            exit 1
+          fi
+          echo "::notice::the contract tier ran: $count tests, 0 skipped"
 
   # ------------------------------------------------------------------- pins
   pins:

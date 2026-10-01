@@ -125,8 +125,12 @@ container's own `repr`.
 For telemetry the fleet specifies the **allowlist** rather than a set of things to
 remove, and that specification is
 [core's `redaction.schema.json`](https://github.com/cafaye/core/blob/master/schemas/telemetry/redaction.schema.json).
-`muse` is the only service in the fleet that exports any signal, so it is where
-the boundary is enforced and tested:
+`muse` is an LLM gateway, so it is where a prompt would leak if anywhere would —
+but it is **not** the only service the boundary applies to.
+`courier`, `billing` and `identity` export traces too, and the boundary is
+enforced **once, in the collector**, rather than trusted to each service's
+discipline: `kit`'s collector config is derived from `core`'s schemas, and its
+gate compares the two in both directions at gate time.
 
 - **What may be recorded about an LLM call** is a fact about how it was served:
   which model, the token **counts**, the latency, the finish-reason class, and the
@@ -253,9 +257,14 @@ secrets](/runbooks/secret-rotation/).
 - **No broker, so no event leakage — and no event delivery.** Nothing publishes
   off the outbox, which is good for a data-egress argument and bad for anything
   that expected a service to react to another.
-- **No collector is deployed.** The telemetry contract is shipped and enforced;
-  nothing receives it. [Observability](/observability/) has the list of what is
-  specified and what is running, which is not the same list.
+- **Telemetry is instrumented but not deployed.** `courier`, `billing`,
+  `identity` and `muse` export traces to whatever `<SERVICE>_OTEL_ENDPOINT`
+  names, and **no collector is deployed in any environment**, so there is no
+  egress to worry about *and* nowhere for a span to land. The stack that would
+  receive them is shipped by `kit`, and its redaction boundary is enforced in
+  the collector rather than trusted to each service.
+  [Observability](/observability/) has the per-service table, and it is a
+  different list from the one describing what is running.
 
 **Coverage the CI does not have.**
 

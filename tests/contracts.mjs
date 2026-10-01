@@ -368,3 +368,199 @@ test('every span name in observability.md obeys core span-naming schema', () => 
   );
   console.log(`    # span names checked against core's pattern: ${good.length} good, ${never.length} rejected`);
 });
+
+/**
+ * What core's `fleet.yml` says each service exports, read out of core's file.
+ *
+ * No YAML dependency, and deliberately so: this repository's rule is that Astro
+ * and Starlight are the only two, and a parser is a dependency. `fleet.yml` is
+ * core's own hand-maintained transcription with one shape — a `telemetry:`
+ * block per service carrying an inline `signals: [...]` — so it is read
+ * directly and the parse is **required to find a block for every service in the
+ * file**. A regex that quietly matched nothing would report "no service exports
+ * anything", every row in the table would then be checked against a fiction, and
+ * the suite would be green about nothing: the same shape as the "0 pass, 0 fail"
+ * failure the suite-size guard in ci.yml exists to catch.
+ */
+function coreExportedSignals() {
+  const path = join(CORE_PATH, 'fleet.yml');
+  assert.ok(
+    existsSync(path),
+    `core's fleet.yml is not readable at ${path}. This is the machine-readable record of ` +
+      'which services export which signals, and the per-service table on ' +
+      'observability.md is checked against it. Set CORE_PATH.',
+  );
+  const source = readFileSync(path, 'utf8');
+  const found = new Map();
+
+  // One block per `- name:`, so the split is on the file's own structure rather
+  // than on indentation guesses. Spaces, never `\s`, in the structural
+  // positions: `\s` matches a newline, so `^\s{2}` will happily match a blank
+  // line and the block boundary stops meaning anything.
+  for (const block of source.split(/^ {2}- name: /m).slice(1)) {
+    const name = block.slice(0, block.indexOf('\n')).trim();
+    assert.ok(
+      /^ {4}telemetry:[ \t]*$/m.test(block),
+      `core's fleet.yml has no \`telemetry:\` block for ${name}. core's own suite asserts ` +
+        'one exists, so either the file moved or the extractor here is wrong. Neither may ' +
+        'be answered by skipping the comparison.',
+    );
+    const signals = /^ {6}signals:[ \t]*\[([^\]]*)\][ \t]*$/m.exec(block);
+    assert.ok(
+      signals,
+      `core's fleet.yml has a telemetry block for ${name} with no inline \`signals: [...]\` ` +
+        'line. The extractor here reads exactly that shape; fix the extractor or the ' +
+        'file, never lower this assertion.',
+    );
+    found.set(
+      name,
+      signals[1]
+        .split(',')
+        .map((one) => one.trim())
+        .filter(Boolean),
+    );
+  }
+
+  const declared = [...source.matchAll(/^ {2}- name: (\S+)$/gm)].map((m) => m[1]);
+  assert.ok(
+    declared.length > 0 && found.size === declared.length,
+    `read ${found.size} telemetry blocks out of ${declared.length} services in core's fleet.yml. ` +
+      'A partial parse would make the comparison below a comparison against a fiction.',
+  );
+  return found;
+}
+
+test('the per-service telemetry table agrees with core fleet.yml', () => {
+  // WHY THIS TIER, AND WHY THIS FILE. The table on observability.md is the one
+  // thing on this site a buyer can act on, and it is a claim about other
+  // repositories — which makes it exactly the kind of claim this tier exists to
+  // check. It was wrong for a day in the worst way available: three services
+  // shipped a wired OTel SDK, `core`'s record said `signals: []`, and the site
+  // told buyers "exactly one service exports any signal at all". Nothing in the
+  // offline tier can see that, because the sentence is grammatical and the
+  // other repository is not on disk.
+  //
+  // Two directions, because one direction is a check that passes on an empty
+  // table: a service core records as exporting traces must appear as
+  // instrumented, AND a service the table calls instrumented must be one core
+  // records as exporting. The second is the one that catches this packet's
+  // subject — the table claiming a capability the fleet record does not have.
+  const exported = coreExportedSignals();
+  const page = readFileSync(join(docs, 'observability.md'), 'utf8');
+
+  // The table, not the page: the first column of the `## Per service` table.
+  const section = /##\s+Per service\b([\s\S]*?)(?=\n##\s|\Z)/.exec(page);
+  assert.ok(
+    section,
+    'observability.md has no `## Per service` section. The per-service table is the ' +
+      'part of the page a buyer can act on; this check reads it and cannot read a ' +
+      'section that is not there.',
+  );
+
+  const rows = new Map();
+  for (const line of section[1].split('\n')) {
+    // A row's first cell is a service link, or a bare code span for a service
+    // that has no page of its own. Both are one name; nothing else is a row.
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 4) continue;
+    const named = /^\[`?([a-z]+)`?\]\(/.exec(cells[0]) ?? /^`([a-z]+)`$/.exec(cells[0]);
+    if (!named) continue;
+    rows.set(named[1], cells);
+  }
+
+  assert.ok(
+    rows.size >= exported.size,
+    `observability.md's per-service table names ${rows.size} services and core's fleet.yml ` +
+      `records ${exported.size} (${[...exported.keys()].join(', ')}). A table shorter than ` +
+      'the record cannot be a summary of it.',
+  );
+
+  const unrecorded = [];
+  const contradicted = [];
+  for (const [name, cells] of rows) {
+    if (!exported.has(name)) continue; // A service core does not record: nothing to check.
+    const claimsInstrumented = /\byes\b/i.test(cells[2]);
+    const coreSays = exported.get(name).includes('traces');
+    if (claimsInstrumented !== coreSays) {
+      contradicted.push(
+        `${name}: the table says ${claimsInstrumented ? 'instrumented' : 'not instrumented'}, ` +
+          `core's fleet.yml records signals: [${exported.get(name).join(', ')}]`,
+      );
+    }
+    // The third column is `deployed`, and nothing anywhere in the fleet is, so
+    // a `yes` in it is a claim core's own file cannot support and this packet
+    // has verified to be false.
+    if (/\byes\b/i.test(cells[3])) unrecorded.push(name);
+  }
+  assert.deepEqual(
+    contradicted,
+    [],
+    `the per-service table on observability.md disagrees with core's fleet.yml:\n  ` +
+      `${contradicted.join('\n  ')}\n  core is the record; fix the table, or fix fleet.yml ` +
+      'and the table in the same commit.',
+  );
+  assert.deepEqual(
+    unrecorded,
+    [],
+    `the per-service table claims these services are DEPLOYED: ${unrecorded.join(', ')}. ` +
+      'No collector is running in any cafaye environment, and nothing in this ' +
+      'repository can make that true — so this is a table asserting something no ' +
+      'evidence supports.',
+  );
+
+  // The other half of the same failure: a *sentence* claiming one service is the
+  // only one that exports. That is what three pages carried, it is what core's
+  // fleet.yml carried in a `notes` field, and no table check catches it because
+  // it is not in the table. Checked against core's record rather than banned
+  // outright, so a claim that ever becomes true passes.
+  //
+  // A CLOSED vocabulary of service-counting claims, not the word "only". The
+  // first version matched `only` next to any telemetry word and produced five
+  // offenders on correct text: "core owns the contract only", "it exports traces
+  // only", "remove the secret only after", `invite-only`, and the shell
+  // `export` builtin in a ```sh fence. A guard with that many false positives
+  // gets deleted, and a guard nobody trusts is not a guard.
+  const exporting = [...exported.keys()].filter((name) => exported.get(name).includes('traces'));
+  const EXCLUSIVITY = new RegExp(
+    [
+      String.raw`\bonly\s+(?:one\s+|other\s+)?(?:cafaye\s+)?service\b`,
+      String.raw`\bno\s+other\s+service\b`,
+      String.raw`\bexactly\s+one\s+service\b`,
+      String.raw`\bsole\s+exporter\b`,
+      String.raw`\bthe\s+only\s+(?:exporter|one\s+that\s+export)`,
+    ].join('|'),
+    // `g` because the paragraph is walked with `matchAll`, so a negated claim and
+    // an un-negated one in the same paragraph are separable.
+    'gi',
+  );
+  const TELEMETRY = /\b(?:export|emit|signal|telemetry|trace|observab|collector)\b/i;  // "is NOT the only service the boundary applies to" is a true uniqueness
+  // claim, and flagging it is how a guard teaches its author to delete it. A
+  // negator within a few words in front of the match clears it, and only that.
+  const NEGATED = /\b(?:not|never|no\s+longer|rather\s+than|instead\s+of)\b[^.]{0,12}$/i;
+  const offenders = [];
+  for (const file of contentFiles()) {
+    // Fences go first: a ```sh block's `export FOO=bar` is a shell builtin, and
+    // a prose check that reads shell code is a prose check about the wrong
+    // language.
+    const prose = readFileSync(file, 'utf8').replace(/^```[\s\S]*?^```/gm, '');
+    for (const paragraph of prose.split(/\n[ \t]*\n/)) {
+      if (!TELEMETRY.test(paragraph)) continue;
+      for (const claim of paragraph.matchAll(EXCLUSIVITY)) {
+        if (NEGATED.test(paragraph.slice(Math.max(0, claim.index - 24), claim.index))) continue;
+        const first = paragraph.trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+        offenders.push(`${file.slice(root.length + 1)}: ${first}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `a page claims one service is the only one exporting telemetry, and core's fleet.yml ` +
+      `records ${exporting.length}: ${exporting.join(', ')}.\n  ${offenders.join('\n  ')}`,
+  );
+
+  console.log(
+    `    # per-service telemetry rows checked against core's fleet.yml: ${rows.size} rows, ` +
+      `${exporting.length} services recorded as exporting traces, ${offenders.length} exclusivity claims`,
+  );
+});

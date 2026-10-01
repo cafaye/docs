@@ -26,6 +26,17 @@ seals the TOTP secret at rest and is **never generated** — unset means the
 management routes are **absent** rather than present-and-broken, and a wrong
 length is a startup failure.
 
+**`identity` exports traces.** A batched tracer over an OTLP/HTTP exporter —
+retry and sending queue both explicitly off, because a retry loop against a dead
+collector is a goroutine waking on a timer for the life of the process.
+`IDENTITY_OTEL_ENDPOINT` is the whole contract, with
+`OTEL_EXPORTER_OTLP_ENDPOINT` honoured as a fallback, and it defaults to the
+collector that ships with the stack. Traces only: no meter is installed. Its
+`error.type` is `core`'s vocabulary, all thirteen, with anything else collapsed
+to `_OTHER` — and a test walks the list against `core`'s schema, so the two
+cannot drift. **No collector is deployed in any environment.** See
+[Observability](/observability/).
+
 **Not built:** email verification and password reset, OAuth sign-in via goth,
 scoped API tokens, the admin API, and key rotation. No self-service password
 recovery — a user who forgets a password today has no path back in.

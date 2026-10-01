@@ -190,11 +190,16 @@ an invalid example. Each service implements it in its own language, by the same
 rule that governs the outbox: core owns the contract, the service ships the
 implementation.
 
-**What is not true today:** no collector is deployed, no Grafana/Loki/Tempo/Mimir
-stack is running, and `muse` is the only service exporting any signal. The
-decision that *is* settled is that it is on by default and exercised in
-development, with bring-your-own-endpoint and a one-variable disable as
-first-class escape hatches. [Observability](/observability/) has the contract and
+**What is not true today:** no collector is deployed in any environment, and
+nothing receives the spans the services emit.
+The services themselves are instrumented — `courier`, `billing`, `identity` and
+`muse` each wire an OTel SDK and export traces from their own code, defaulting
+to the collector that ships with the stack — and the stack itself is shipped by
+`kit` as templates that `bin/dev` fetches and runs.
+What is settled is that it is on by default and exercised in development, with
+bring-your-own-endpoint and a one-variable disable as first-class escape
+hatches.
+[Observability](/observability/) has the contract, the per-service table, and
 the gap.
 
 ## What to read next

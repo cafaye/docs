@@ -27,6 +27,17 @@ need a provider webhook, which is a later packet.
 **And no publisher loop reaches a bus.** `courier`'s Oban worker relays to the
 outbox path; there is no broker in the platform, so a recorded event is still a
 row. See [Topology](/architecture/topology/#what-is-not-wired-yet).
+
+**`courier` exports traces.** It configures a batch processor over an OTLP
+exporter and installs its own span processor, because the Erlang OTel SDK cannot
+start one — the module doc carries the reproduction. `COURIER_OTEL_ENDPOINT` is
+the whole contract and defaults to the collector that ships with the stack;
+`COURIER_TENANT_ID` goes on the **resource**, so it cannot blow the
+attribute-combination cap. It exports **traces only**: that SDK has no metrics
+API, and kit's collector derives metrics from spans. Its `error.type` is core's
+vocabulary, all thirteen. **No collector is deployed in any environment**, so
+there is nowhere for the spans to land until you run the stack. See
+[Observability](/observability/).
 :::
 
 ## The event types changed, and that is the part a consumer has to know

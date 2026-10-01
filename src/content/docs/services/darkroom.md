@@ -23,6 +23,16 @@ repository can reach a real bucket and nothing should — so the R2 rules below
 are tested as configuration, credential scope and header shape, and the
 end-to-end check against a bucket is a **manual procedure in that repository's
 README**.
+
+**`darkroom` exports no OTel signal, and that is a different answer from
+"broken".** It has no `opentelemetry` dependency and no exporter; it uses the
+Rust `tracing` facade with a JSON subscriber and keeps its own `trace_id` in a
+task-local, so the `X-Trace-Id` header, the problem body, and every log line
+under the request read the same value — a real correlation story that is not an
+OTLP span story. Its log records do reach the stack when it runs, through the
+collector's stderr receiver, with no per-language SDK involved. The other
+emitters are on `core`'s `error.type` vocabulary; `darkroom` records a
+`trace_id` rather than an error class. See [Observability](/observability/).
 :::
 
 ## The upload flow is three calls, and the bytes never pass through
