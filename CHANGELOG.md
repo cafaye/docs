@@ -8,7 +8,108 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- **One cluster, many databases** (`architecture/one-cluster`), the page an
+  operator needs when a service cannot reach its database. The fleet runs **one**
+  Postgres with a database and a role per service, and the site described
+  something else. Every command and every block of output on the page was **run**
+  against a cluster built by `kit`'s own
+  `templates/compose/postgres/initdb/10-cluster.sh`, brought up through
+  `kit/templates/compose/docker-compose.yml`.
+
+  The page answers four questions the rest of the site could not:
+
+  - **What stops `courier` reading `billing`'s rows** — `REVOKE ALL ON DATABASE
+    … FROM PUBLIC`, with the measured counterfactual that one `GRANT CONNECT`
+    undoes it. `identity` reaching into `billing` is refused with
+    `FATAL:  permission denied for database "billing"` /
+    `DETAIL:  User does not have CONNECT privilege.`, exit 2, and the refusal
+    happens before a query is parsed. `kit`'s own `tests/isolation_test.sh` was
+    run and passes, including its negative control: a cluster of the same shape
+    built **without** the `REVOKE` lets the role in, which is what makes the
+    refusal mean anything.
+  - **How to tell whether isolation is actually in place**, because the failure
+    mode is silence — a cluster with no boundary answers every query a service
+    sends, so the only evidence is the absence of an error. The page gives the
+    one-query sweep over `pg_database`, and shows what an open database looks
+    like: a `CREATE DATABASE` with nothing else, `courier` walking into it, and
+    the whole cluster enumerable from inside. The sweep answers `none` on a
+    healthy cluster and **names** the offending database on a broken one.
+  - **What the connection budget is** — `max_connections` 200, a per-role
+    `ALTER ROLE … CONNECTION LIMIT` of 10, measured — and what happens at the
+    limit. The server says `FATAL:  too many connections for role "courier"`
+    immediately; a driver with a pool **queues** instead, so the service's own
+    symptom is a timeout and the error is in the Postgres log and nowhere else.
+  - **How to add a service**, which is `bin/dev db grant <name>` — it exists, it
+    prints the statements rather than running them, and its output was captured
+    and the statements run against a live cluster.
+
+  It also states what is **not** proven: that a database created after the volume
+  was provisioned gets Postgres's default and is open to every role, that
+  `docker-entrypoint-initdb.d` cannot re-apply itself, that extensions are a
+  cluster decision (`CREATE EXTENSION vector` as a service role is refused with
+  `HINT:  Must be superuser to create this extension`), and that there is **no**
+  `bin/dev` subcommand that proves isolation on a running cluster.
+
+- **A troubleshooting entry for a service that cannot connect to its database**,
+  in the house style: what to check, what it usually means, what to do. The three
+  reasons that are now possible are separated by the error text rather than
+  guessed at — the role has no `CONNECT` (and that is the boundary *working*, so
+  do not go looking for a grant to add), the database was created by hand and is
+  open to the whole cluster, and the connection budget is exhausted and looks
+  like a timeout. A fourth thing that is not a connection failure at all — an
+  unapplied migration — is named, because `relation "users" does not exist` on a
+  connection that works is a different problem with a different fix.
+
 ### Fixed
+
+- **`architecture/topology.md` described a fleet that has one Postgres.** The
+  per-service table said "Postgres 17, own database" on every row, which reads as
+  a server per service, and the port paragraph reasoned about ports in a world
+  where one container serves the whole fleet.
+
+  - The **Database column now separates the two arrangements that actually
+    exist**: `identity`, `billing` and `courier` have a database **on the shared
+    cluster** and publish no database of their own; `darkroom` and `muse` **still
+    ship a complete `docker-compose.yml` with their own `postgres:17-alpine`** and
+    are not on it. Both clauses were read out of the five compose files rather
+    than assumed, and the difference is stated as a difference rather than
+    smoothed over.
+  - The port paragraph keeps the `KIT_POSTGRES_PORT` claim **exactly as it was**
+    — it was already right — and adds what changed: that one variable is the
+    whole fleet's database, so a second checkout collides with the first, and
+    that a DSN pointed at another service's database now fails with
+    `permission denied for database` rather than a missing role.
+  - Correct sentences were left alone. `Every service is on Postgres 17`, the
+    `darkroom` 5432 trap, the `POSTGRES_PORT` correction and the
+    `pg_isready`-does-not-authenticate note were all still true and are still
+    here.
+  - A new drift subsection records what `kit`'s own fleet gate says, because
+    `caf contract lint` reads manifests and cannot see which container a service
+    runs. `tests/fleet_check.py` was **run against the workspace**: six findings
+    across three repositories, four of them about the database, all `WARN`
+    rather than `FAIL` because none of the three has a `kit.ref` yet. The two
+    Postgres findings are why the Database column is split the way it is. They
+    are a finding against `darkroom` and `muse`, which are read-only from here.
+
+- **`runbooks/backup-and-restore.md` did not say that a dump carries no
+  boundary.** On a cluster where isolation is a *database-level* privilege, this
+  stopped being a limitation. The dump is `pg_dump --format=custom --no-owner
+  --no-privileges`, so it carries no `CREATE ROLE`, no ownership **and no
+  `CONNECT` grant**: a database created by restoring a dump gets Postgres's
+  default, which opens it to every role in the cluster — and the service connects
+  to it successfully, so nothing looks wrong. The existing "not covered" item was
+  extended with that consequence and a link to the one-query check, and it is
+  recorded that a restore *into an existing* database is unaffected, because
+  `restore production` replaces the schema rather than the database. The drill's
+  scratch database has the same property and is now named.
+
+  The 24-hour window, the retention arithmetic, the key-material table and the
+  `billing` four-database row were read and **left alone** — none of them was
+  made false by the single-cluster change. `billing`'s four databases are
+  `config/database.yml`'s `production` block, and the deployment template still
+  provisions one Postgres accessory per service.
 
 - **The other four runbooks, and six pages outside `runbooks/`, described tooling
   from the era before the Kamal pivot.** The backup runbook was rewritten today

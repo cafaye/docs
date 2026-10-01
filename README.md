@@ -150,6 +150,7 @@ src/content/docs/
 ├── architecture/
 │   ├── index.md              what each service owns, and why the boundaries
 │   ├── topology.md           ports, probes, env vars, HTTP surfaces, the drift audit
+│   ├── one-cluster.md        the one Postgres, the database boundary, the budget
 │   └── …                     observability.md sits beside them in the nav
 ├── observability.md          the seven telemetry schemas, and what is not deployed
 ├── running-the-gates.md      the real gate per repository, and the tiers that skip

@@ -79,6 +79,14 @@ the accessory container, and it takes snapshots whether or not you have a gem.
 The whole of it, in one sentence: **one Postgres database per service, dumped
 with `pg_dump`, written to restic in R2.** Nothing else.
 
+**A database is not the same as a server, and on the shared cluster the two are
+easy to confuse.** `bin/dev` brings up **one** Postgres holding a database and a
+role per service, and each is dumped separately — one `pg_dump` per database,
+with the path in the repository keyed on the database name. What a dump does
+**not** carry, on a cluster where isolation is by privilege, is the privilege.
+That is item 3 below, and on this topology it is the one entry in this list that
+is a correctness problem rather than a limitation.
+
 | Service | Durable state | In the backup? |
 | --- | --- | --- |
 | `identity` | one Postgres: `users`, `accounts`, `account_users`, `account_invitations`, `sessions`, `api_keys`, the OIDC tables, the MFA tables | **yes** |
@@ -146,11 +154,25 @@ rather than restored.
    is a latent risk rather than a live one. **The day something attaches a file
    to a Rails model, that volume becomes real state and this page's "nothing on
    local disk" sentence stops being true.**
-3. **Postgres roles and tablespaces.** The dump is
+3. **Postgres roles, privileges and tablespaces.** The dump is
    `pg_dump --format=custom --no-owner --no-privileges` of a single database, so
    it carries no `CREATE ROLE` and no ownership. The role comes from how the
    Postgres accessory was provisioned, not from the backup. Restoring into a
    differently-named role means that role has to exist first.
+
+   **On the shared cluster this is now a correctness problem, and it is one
+   line.** `bin/dev` runs **one** Postgres for the whole fleet, and the boundary
+   between services is `REVOKE ALL ON DATABASE … FROM PUBLIC` — a
+   *database-level* privilege, which `--no-privileges` also does not carry. **A
+   database created by restoring a dump therefore gets Postgres's default, which
+   grants `CONNECT` to `PUBLIC`: it is open to every role in the cluster, and it
+   looks correct because the service connects to it successfully.** Run the
+   one-query check on [one cluster, many
+   databases](/architecture/one-cluster/#how-to-tell-whether-isolation-is-actually-in-place)
+   after any restore that creates a database, and apply the two statements it
+   names. A dump restored *into* an existing database is unaffected — the
+   boundary was applied when that database was provisioned, and `restore
+   production` replaces the schema rather than the database.
 
 And, if you also run kit's local stack for observability, a fourth: its
 `tempo`, `loki`, `mimir` and `grafana` volumes are not in the backup — and
@@ -613,7 +635,12 @@ Four things to know before you run it:
 
 - **It restores into a scratch database and drops it.** Your live database is
   not touched. The wrapper refuses a scratch name containing `prod` or `live`,
-  and refuses the live database's own name.
+  and refuses the live database's own name. **On the shared cluster the scratch
+  database is created with Postgres's defaults**, so while it exists it is
+  reachable by every role on the cluster — `bin/drill` drops it, including after
+  a failure, and the one-query check on [one cluster, many
+  databases](/architecture/one-cluster/#how-to-tell-whether-isolation-is-actually-in-place)
+  is what finds one that a hard kill left behind.
 - **It needs `psql` on your machine and network access to the Postgres
   accessory**, because it creates and drops the scratch database itself. If the
   accessory is not directly reachable — it normally is not, outside the host's
@@ -824,3 +851,5 @@ retention policy the platform itself cannot delete. None of that ships today.
   restore is trying to bring back.
 - [Topology](/architecture/topology/) — which service owns which database and
   every environment variable in one table.
+- [One cluster, many databases](/architecture/one-cluster/) — the one Postgres a
+  dump lands on, and why a restore does not bring the boundary back with it.
