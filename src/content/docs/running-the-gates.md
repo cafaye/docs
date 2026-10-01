@@ -61,9 +61,9 @@ workflow file existing does not make the rest of the fleet honest.
 | --- | --- | --- |
 | `core` | `bin/prime` | `mise install` — builds `tests/.venv` on first run |
 | `caf` | `bin/prime` && `go vet ./...` && `gofmt -l .` | `gofmt -l .` **must print nothing** |
-| `identity` | `bin/prime` && `go vet ./...` && `gofmt -l .` && `go test -race ./...` | `mise install` |
+| `identity` | `bin/prime` && `go vet ./...` && `gofmt -l .` && `go test -race ./...` | `mise install` — **needs Postgres; `bin/dev` brings it up on 15500** |
 | `billing` | `bin/prime` | `mise install` — `bundle install`, `db:prepare`, rubocop, `rails test` |
-| `courier` | `bin/prime` && `mix precommit` | `mise install` — **needs Postgres on `localhost:5432`** |
+| `courier` | `bin/prime` && `mix precommit` | `mise install` — **needs Postgres; `bin/dev` brings it up on 15500** |
 | `darkroom` | `./bin/prime` and `./bin/prime --db` | `mise install` — the second tier needs `TEST_DATABASE_URL` |
 | `muse` | `bin/prime` | `mise install` — `uv sync --locked`, ruff, pytest |
 | `guard` | `bin/prime` | `bun` — `bun install && bun test` |
@@ -89,11 +89,17 @@ deploy step, not a test step** — and here they are a hard prerequisite, not a
 formality:
 
 ```sh
-bin/dev up                            # infrastructure, then the service
+bin/dev                              # fetch kit's stack at kit.ref, up --wait, migrate
 export DATABASE_URL="postgres://identity:identity@localhost:15500/identity?sslmode=disable"
 goose -dir migrations postgres "$DATABASE_URL" up        # <- without this, see below
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
+
+**`docker compose up -d postgres` does not work in `identity`.** Its
+`docker-compose.yml` is an override with no `image:` on `postgres`, because kit's
+stack ships that container; run alone it fails with *"service \"postgres\" has
+neither an image nor a build context specified"*. `identity` carries `bin/dev`,
+which fetches kit's stack and merges it.
 
 **Skipping `goose up` gives you `relation "public.oidc_clients" does not
 exist`**, not a skip and not a clean failure. The OIDC tables were never created
@@ -101,22 +107,26 @@ by a migration run, so the tests that need a real server find nothing to talk
 to. This is the single most confusing failure in the fleet, because the error
 names a relation rather than the missing step.
 
-The exact DSN matters, and **it is not the port you would guess.** Two things
-were true of this page and are not any more. `identity`'s compose file is an
-**override** on `kit`'s stack and does not publish a Postgres host port at all —
-so `docker compose up -d postgres` here is a command that fails, not one that
-works. And the stack `bin/dev` brings up publishes Postgres on **15500**,
-because that is `kit`'s port block, not 5432. Read it out of the rendered config
-rather than guessing:
+The exact DSN matters, and **the port is not 5432**: kit's stack publishes its
+Postgres on `${KIT_POSTGRES_PORT:-15500}`, and `identity`'s own file publishes
+none. A local Postgres install already listening on 5432 means a host-side DSN
+pointed there silently reaches the *other* server and fails with
+`role "identity" does not exist`, which reads like a missing migration.
+
+Two things this page used to say are no longer true. **`docker compose up -d
+postgres` is a command that fails** here, because `identity`'s compose file is an
+**override** on `kit`'s stack and carries no `image:` on `postgres`. And the stack
+`bin/dev` brings up publishes Postgres on **15500**, because that is `kit`'s port
+block. Read it out of the rendered config rather than guessing:
 
 ```sh
 bin/dev stack          # prints the merged compose file; find the postgres ports
 ```
 
-`bin/dev up` also runs `bin/migrate` for you, so the `goose up` line above is
-for a host-side loop or a fresh database rather than the ordinary path. And see
-[Getting started](/getting-started/#step-5--run-a-service-locally) for the
-failure `bin/dev up` currently ends on for this repository.
+`bin/dev` also runs `bin/migrate` for you, so the `goose up` line above is for a
+host-side loop or a fresh database rather than the ordinary path. And see [Getting
+started](/getting-started/#step-5--run-a-service-locally) for the failure
+`bin/dev` currently ends on for this repository.
 
 **This is the one tier in the fleet that CI now refuses to let skip.** Every
 command above is what `identity`'s own `gate` job runs, and it asserts the
@@ -226,18 +236,23 @@ tests/self_test.sh` on its own runs the eleven.
 ### `courier` — needs a database, and it says so
 
 ```sh
-bin/dev up                    # brings up kit's postgres on 15500, then courier
-mise run prime               # hex, deps, database, tests
-mix precommit                # warnings-as-errors, unused deps, format, test
+bin/dev                             # fetch kit's stack at kit.ref, up --wait, migrate
+mise run prime                      # hex, deps, database, tests
+mix precommit                       # warnings-as-errors, unused deps, format, test
 ```
 
 The gate is `mix local.hex --force && mix deps.get && mix ecto.setup && mix
-test`, and it needs a Postgres it can reach — read the DSN out of the merged
-compose file with `bin/dev stack` rather than assuming a port. Two things this
-page used to say are no longer true: `docker compose up -d db` is a command that
-fails, because `courier`'s compose file is an override on `kit`'s stack and has no
-`db` service of its own; and the stack does **not** put Postgres on 5432.
-`mix precommit` is what runs before a commit lands.
+test`, and it needs a Postgres that nothing else is holding. `mix precommit` is
+what runs before a commit lands.
+
+**`bin/prime` does not start a database, and there is no `db` service to start.**
+`courier`'s compose file calls it `postgres`, it belongs to kit's stack rather
+than to `courier`, and it is published on `KIT_POSTGRES_PORT` (default `15500`)
+— so `docker compose up -d db` is a command that cannot resolve on two counts.
+`bin/dev` is how `courier` gets one; read the DSN out of the merged compose file
+with `bin/dev stack` rather than assuming a port, because a DSN aimed at a native
+Postgres on 5432 fails as `role "courier" does not exist` and reads like a missing
+migration.
 
 ### `billing` and `cafaye-rb` — database in the gate, not outside it
 

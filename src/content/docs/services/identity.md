@@ -163,18 +163,36 @@ not exist` rather than skipping.
 
 ```sh
 bin/prime && go vet ./... && gofmt -l . && go test -race ./...
+```
 
-bin/dev up
+`bin/prime` itself needs no database — the integration tests skip unless
+`TEST_DATABASE_URL` is set. To run them you need a Postgres, and **this
+repository cannot start one on its own**: `identity/docker-compose.yml` is an
+**override** with no `image:` on `postgres`, because kit's stack ships that
+container. `docker compose up -d postgres` here fails with *"service \"postgres\"
+has neither an image nor a build context specified"*.
+
+`identity` carries **`bin/dev`**, which fetches kit's stack at the ref in
+`kit.ref` and brings up a database on `KIT_POSTGRES_PORT` (default `15500`):
+
+```sh
+bin/dev                              # fetch kit, compose up --wait, migrate, seed, print URLs
 export DATABASE_URL="postgres://identity:identity@localhost:15500/identity?sslmode=disable"
+goose -dir migrations postgres "$DATABASE_URL" up
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
 
-`gofmt -l .` must print nothing. **The port is 15500, not 5432**: `identity`'s
-compose file is an override on `kit`'s stack, publishes no Postgres port of its
-own, and `kit`'s stack publishes one on 15500. Read it with `bin/dev stack`
-rather than guessing, and note that `bin/dev up` does not currently finish for
-this repository — see [Getting
-started](/getting-started/#step-5--run-a-service-locally). See also [Running the
+**The port is the part to get right.** `identity`'s compose file publishes no
+Postgres host port at all, and the stack `bin/dev` brings up publishes one on
+**15500**, because that is `kit`'s port block and not 5432. A DSN written for
+5432 either fails or — the worse outcome — reaches a *different* Postgres that
+happens to be listening there, and fails with `role "identity" does not exist`,
+which reads like a missing migration. Read the port out of the rendered stack
+with `bin/dev stack` rather than assuming one, and note that `bin/dev` currently
+does not finish for this repository — see [Getting
+started](/getting-started/#step-5--run-a-service-locally).
+
+`gofmt -l .` must print nothing. See [Running the
 gates](/running-the-gates/#identity--needs-a-database-and-migrations-applied).
 
 - **Repository:** [github.com/cafaye/identity](https://github.com/cafaye/identity)

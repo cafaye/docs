@@ -25,14 +25,32 @@ config, the Tempo/Loki/Mimir configs, the Grafana provisioning, and two
 dashboards — and `bin/dev` fetches the whole thing from a pinned ref and brings
 it up.
 
-**A service repository's own `docker-compose.yml` does not start any of it**, and
-for `identity`, `courier` and `billing` it does not even start on its own — those
-three are *overrides* on `kit`'s stack, so plain `docker compose up` fails
-outright and `bin/dev` is the command that composes them. Either way the
-collector is absent, so a service brought up without `kit`'s stack is exporting
-to a host that is not there. Every service defaults its
-`<SERVICE>_OTEL_ENDPOINT` to `http://localhost:4318`, and in a compose network
-`localhost` is the service itself.
+**A service repository's own `docker-compose.yml` starts none of it**, and for
+`identity`, `courier` and `billing` it does not even start on its own — those
+three are *overrides* on `kit`'s stack, so plain `docker compose up` fails with
+`service "postgres" has neither an image nor a build context specified` and
+`bin/dev` is the command that composes them. Either way the collector is absent,
+so a service brought up without `kit`'s stack is exporting to a name that does
+not resolve: every service that has an SDK defaults
+`<SERVICE>_OTEL_ENDPOINT` to **`http://otel-collector:4318`**, and
+`otel-collector` is a service name **inside kit's network** and nothing else. A
+service in any other network dials itself.
+
+**And `bin/dev` is the only thing that starts a collector, which is a smaller
+adoption problem than it looks like.** A service repository's own
+`docker-compose.yml` never mounts the collector's config, so bringing one up on
+its own leaves the service exporting to a host that is not there. **`identity`,
+`courier` and `billing` already carry `bin/dev`**; the other four do not, and
+copying it is the whole fix:
+
+```sh
+# KIT is a checkout of cafaye/kit somewhere on this machine
+cp "$KIT/templates/bin/dev.sh" ./bin/dev && chmod +x bin/dev
+```
+
+plus a `kit.ref` pinning a 40-character commit sha — `bin/dev` refuses a branch
+name, loudly, before any network call, because a moving reference is a gate that
+changes under you.
 :::
 
 ## The three states

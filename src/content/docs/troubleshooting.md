@@ -487,7 +487,7 @@ less than it appears to:
 | `darkroom` | the `#[ignore]`d database tests, and the `s3` feature entirely | `TEST_DATABASE_URL`; `cargo test` alone does not even compile the feature |
 | `muse` | the two core-parity tests | `MUSE_CORE_SCHEMAS=../core/schemas` |
 | `pantry` | all eight drift tests, and the `../caf` contract lint | `PANTRY_CAFAYE_ROOT` pointing at a workspace |
-| `courier` | nothing, but it needs a database to run at all | Postgres on `localhost:5432` |
+| `courier` | nothing, but it needs a database to run at all | a Postgres it can reach — **`bin/dev` brings up kit's stack**, whose Postgres is on `KIT_POSTGRES_PORT` (default `15500`), not 5432. `docker compose up -d db` cannot work: this repository has no `db` service, and its compose file is an override that cannot start a database alone |
 | `kit` | everything, if PyYAML is missing | a virtualenv — the gate exits 1 rather than pretending |
 
 **Or CI never ran at all.** `docs` is the only cafaye repository with no

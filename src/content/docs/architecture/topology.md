@@ -15,18 +15,36 @@ This page is the reference you keep open during an incident.
 
 | Service | Language | Container port | Local port | Database | `core:` |
 | --- | --- | --- | --- | --- | --- |
-| `identity` | Go | 8080 | 8080 | Postgres 17, own database | `^0.1.0` |
-| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres 17, own database | `^0.2.0` |
-| `courier` | Elixir | 4000 | 4000 | Postgres 17, own database | `^0.1.0` |
+| `identity` | Go | 8080 | 8080 | Postgres via `kit`'s container, own database | `^0.1.0` |
+| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres via `kit`'s container, own database | `^0.2.0` |
+| `courier` | Elixir | 4000 | 4000 | Postgres via `kit`'s container, own database | `^0.1.0` |
 | `darkroom` | Rust | 8080 | 8080 | Postgres 17, own database | `^0.2.0` |
-| `muse` | Python | 8000 | 8000 | Postgres 18, own database | `^0.2.0` |
+| `muse` | Python | 8000 | 8000 | Postgres 17, own database | `^0.2.0` |
 | `guard` | TypeScript (Bun) | 8080 | 8080 | **none** — `Map`s and, with `REDIS_URL`, Redis | `^0.1.0` |
 | `parlor` | Next.js | 3000 | 3000 | **none** | *manifest is a pre-`core` draft* |
 
-Three services want host port **8080** (`identity`, `guard`, `darkroom`).
-`identity`, `billing`, `courier` and `darkroom` all publish Postgres on host 5432
-(`muse` uses 5433). On one machine, run them one at a time or remap the host
-side — the compose files take `POSTGRES_PORT` where the repository offers it.
+**Every service repository pins Postgres 17.** `muse` **was** on 18 and was moved
+down deliberately — one platform, one major version, one upgrade path — and its
+own compose file carries the migration note for a developer holding a real 18 data
+directory. **The pin is not always what you get:** `identity`, `courier` and
+`billing` pin nothing of their own, because they use `kit`'s container, and the
+`.env` `bin/dev` writes on a first run sets `KIT_POSTGRES_TAG=16.6-alpine` over
+kit's `17-alpine` default. [Getting started](/getting-started/) has the version
+you actually get and how to change it.
+
+Three services want host port **8080** (`identity`, `guard`, `darkroom`), and two
+want **3000** (`billing`, `parlor`), so run one of each at a time on a laptop.
+
+**Only two services publish a Postgres port on the host:** `darkroom` on `5432`
+and `muse` on `5433`, both as literals. `identity`, `courier` and `billing`
+publish **none** — their databases are reached over the compose network by
+service name, and kit's fetched stack publishes its own on `KIT_POSTGRES_PORT`
+(default `15500`). **There is no `POSTGRES_PORT` variable in any service
+repository**; the variable that exists is `KIT_POSTGRES_PORT`, it lives in kit's
+`.env`, and a service's own compose file may not move it. The trap is
+`darkroom`'s 5432 landing on a native Postgres that is already there: the
+container reports **healthy** (`pg_isready` does not authenticate) while your
+command reaches the wrong database.
 
 **`core:` is not uniform, and that is recorded rather than fixed.** Four
 repositories still pin `^0.1.0`, which resolves to a `core` below the `0.2`

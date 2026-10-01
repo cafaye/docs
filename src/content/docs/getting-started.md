@@ -366,13 +366,29 @@ a dependency the registry does not know how to run is reported as `skipped`
 rather than silently omitted. It does not deploy, and it does not start a broker —
 nothing in the platform publishes events off the outbox.
 
-**Each service repository also ships its own Compose stack**, and that remains the
-supported path for a single service. **`identity`, `courier` and `billing` cannot
-be started with a bare `docker compose up`**, though, and this page used to tell
-you to. Their `docker-compose.yml` is an **override** on `kit`'s stack rather
-than a whole stack: it sets their own database name and builds their own service,
-and the Postgres it refers to is `kit`'s, with no image of its own. Run alone,
-compose says so and starts nothing:
+:::caution[Not every service has a Compose stack you can bring up on its own]
+`darkroom`, `muse` and `guard` ship a complete `docker-compose.yml`, and
+`docker compose up -d` works in each of them (`muse` needs `MUSE_VAULT_KEY` set,
+or compose refuses to interpolate it). With one of those, the shape is:
+
+```sh
+git clone git@github.com:cafaye/darkroom.git
+cd darkroom
+docker compose up -d            # or just `up -d postgres` and `cargo run` on the host
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+```
+{"status":"ok"}
+{"status":"ok"}
+```
+
+**`identity`, `courier` and `billing` do not.** Their `docker-compose.yml` is an
+**override**, not a stack: the service, its database name and role, and the
+crash layer — and deliberately **no `image:` on `postgres`**, because kit's
+fetched stack ships that container. Run alone, it stops before starting anything,
+which is what this page used to tell you to do in all three:
 
 ```sh
 git clone git@github.com:cafaye/identity.git
@@ -384,19 +400,27 @@ docker compose up -d
 service "postgres" has neither an image nor a build context specified: invalid compose project
 ```
 
-**The supported command is `bin/dev`**, which ships in those three repositories.
-It reads the `kit.ref` pin, resolves that exact ref of `kit` — from a local
+(`courier` fails one step earlier still, on a missing
+`COURIER_SECRET_BOX_KEY`.) **Those three use `bin/dev`**, which every one of them
+carries: it fetches kit's stack at the ref in `kit.ref` and merges your file
+beside it. It reads the pin, resolves that exact ref of `kit` — from a local
 checkout, a cache, a vendored copy, or a fetch — runs compose with `kit`'s stack
 as the base file and yours as the override, then migrates, seeds the local admin
 and prints the URLs that actually work:
 
 ```sh
-git clone git@github.com:cafaye/identity.git
-cd identity
-bin/dev up
+bin/dev                              # fetch kit at kit.ref, merge, up --wait, migrate, print URLs
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
 ```
 
-:::caution[`bin/dev up` currently does not finish for `identity`, `courier` or `billing`]
+`identity` is the shortest example of the `bin/dev` shape, and the difference
+shows in the readiness answer: the database is in kit's stack rather than the
+service's, so readiness carries the dependency by name —
+`{"status":"ok","deps":"postgres"}`.
+:::
+
+:::caution[`bin/dev` currently does not finish for `identity`, `courier` or `billing`]
 Run it and the infrastructure comes up healthy — Postgres, NATS, Redis, the
 collector, Grafana, Tempo, Loki, Mimir — and then this, with **nothing about the
 database in the message**:
@@ -427,7 +451,8 @@ docker run --rm --log-driver syslog \
 manifest, needs no kit pin, and brings the service up.**
 :::
 
-With the service up, both probes answer:
+With the service actually up — through `caf dev`, or with the `logging:` block
+removed from a local copy of the compose file — both probes answer:
 
 ```
 {"status":"ok"}
@@ -440,7 +465,8 @@ healthy dependency check. The `/v1` routes are only registered when
 `DATABASE_URL` is set, so a missing database is a clean `404` rather than a
 pile of `500`s.
 
-To run it without Docker at all — the faster loop while you are changing code:
+To run `identity` without Docker at all — the faster loop while you are changing
+code, and it needs no database:
 
 ```sh
 mise install          # reads identity/mise.toml -> the pinned Go
@@ -454,28 +480,29 @@ kinds are not interchangeable — that is the whole table:
 
 | Service | Local stack | Command | Port | What answers |
 | --- | --- | --- | --- | --- |
-| `identity` | `kit` override | `bin/dev up` — see the caution above | 8080 | `{"status":"ok","deps":"postgres"}` |
-| `courier` | `kit` override | `bin/dev up` — see the caution above | 4000 | `{"status":"ok"}` |
-| `billing` | `kit` override | `bin/dev up` — see the caution above | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
-| `darkroom` | standalone | `docker compose up -d` | 8080 | `{"status":"ok"}` |
-| `muse` | standalone | `docker compose up --build` | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
+| `identity` | `kit` override | `bin/dev` — see the caution above | 8080 | `{"status":"ok","deps":"postgres"}` |
+| `courier` | `kit` override | `bin/dev`, or `mix phx.server` — see the caution above | 4000 | `{"status":"ok"}` |
+| `billing` | `kit` override | `bin/dev` — see the caution above | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
+| `darkroom` | standalone | `docker compose up -d postgres`, then `cargo run` | 8080 | `{"status":"ok"}` |
+| `muse` | standalone | `docker compose up --build` (needs `MUSE_VAULT_KEY`) | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
 | `guard` | standalone | `docker compose up -d --build` | 8080 | `{"deps":{…}}` |
 | `parlor` | none — no Compose file | `bun run dev` | 3000 | `{"status":"ok","deps":"none"}` |
 
-The first three ship **`bin/dev`** and a `kit.ref` pin; the last three ship no
+The first three ship **`bin/dev`** and a `kit.ref` pin; the next three ship no
 `bin/dev` and own every image they need, so plain `docker compose` is correct
 for them and only for them. `parlor` ships no Compose file at all — it is a
 Next.js app and `bun run dev` is the whole story.
 
-**Two of the standalone stacks refuse to start until you tell them a secret**,
-and that refusal is the right one: `muse` will not render without
-`MUSE_VAULT_KEY`, and `courier` will not without `COURIER_SECRET_BOX_KEY` and
-its inbox resend secret. The message names the variable and, for `muse`, the
-command that generates a valid one.
+**Two stacks refuse to start until you tell them a secret**, and that refusal is
+the right one: `muse` will not render without `MUSE_VAULT_KEY`, and `courier`
+will not render without `COURIER_SECRET_BOX_KEY` — nor boot without
+`COURIER_INBOUND_RESEND_SECRET`, which is a different refusal in a different
+place. The compose message names the variable and, for `muse`, the command that
+generates a valid one.
 
 `billing` is the one that used to be described as "database only, application on
 the host". It is not: its Compose file builds and publishes `billing` on
-`3000:3000` like every other service, and `bin/dev up` brings the whole thing
+`3000:3000` like every other service, and `bin/dev` brings the whole thing
 up. The commands are in that repository's README if you want the host-side
 loop instead.
 
@@ -490,11 +517,21 @@ loop instead.
 | **15500** | **the Postgres `identity`, `courier` and `billing` all use** |
 
 **There is no `POSTGRES_PORT`.** An earlier version of this page told you to
-move a service's database with `POSTGRES_PORT=5433 docker compose up -d`; no
-compose file in the fleet reads that variable, and none of these repositories
-publishes a Postgres host port you can move with it. The variable that exists is
-`KIT_POSTGRES_PORT`, it is `kit`'s rather than a service's, and it defaults to
-`15500`. Set it in `.env` if 15500 is taken.
+move a service's database with `POSTGRES_PORT=5433 docker compose up -d`; that
+does nothing. No compose file in the fleet reads that variable — the only
+`POSTGRES_PORT` anywhere is inside `identity`'s `gate.yml` prose and `parlor`'s
+e2e stack's own `E2E_IDENTITY_POSTGRES_PORT` — and none of these repositories
+publishes a Postgres host port you can move with it anyway. The variable that
+exists is **`KIT_POSTGRES_PORT`**, it is `kit`'s rather than a service's, it
+lives in **kit's `.env`**, and it moves kit's shared container rather than any
+service's. Set it there if 15500 is taken.
+
+**The trap worth knowing is `darkroom`'s.** Its Postgres binds host 5432, so a
+native Postgres already listening there means the container comes up
+**healthy** — the healthcheck is `pg_isready`, which reports a server accepting
+connections and does not authenticate — while your command reaches the *other*
+database and fails with `role "darkroom" does not exist`, which reads like a
+missing migration.
 
 **The real reason you run one of `identity`, `courier` and `billing` at a time
 is not a port.** They share one Postgres container and each renames its
@@ -509,7 +546,7 @@ destructive one and says so.
 
 :::caution[Which Postgres you get is not the one the compose file defaults to]
 `kit`'s stack writes `image: postgres:${KIT_POSTGRES_TAG:-17-alpine}`, so **17 is
-the default** — but the `.env` that `bin/dev up` creates on a first run comes
+the default** — but the `.env` that `bin/dev` creates on a first run comes
 from `kit`'s `.env.example`, and that file sets `KIT_POSTGRES_TAG=16.6-alpine`.
 **Run it and the container reports `postgres:16.6-alpine`.** Change it in your
 `.env` if you need 17; do not assume it from the compose file. `darkroom` and
@@ -527,7 +564,7 @@ Every service applies its schema separately, in its own language, with its own
 tool. None of them migrates on boot — a rolling deploy with two versions live
 would race, and a half-applied migration would take the process down with it.
 
-**On `bin/dev` you do not run this step at all**: `bin/dev up` runs the
+**On `bin/dev` you do not run this step at all**: `bin/dev` runs the
 repository's own migration command between bringing the stack up and printing the
 URLs, and refuses to do anything else if the stack is not healthy first. The
 commands below are for `caf dev`, for a host-side loop, or for a Kamal deploy —
@@ -535,7 +572,7 @@ where they are a job that runs *before* the new image rolls out.
 
 `identity` uses `goose`, which is a command-line tool rather than a module
 dependency. **The port is 15500, not 5432** — that is `kit`'s Postgres, which is
-where `bin/dev up` put it:
+where `bin/dev` put it:
 
 ```sh
 export DATABASE_URL=postgres://identity:identity@localhost:15500/identity
@@ -579,8 +616,9 @@ It takes `-env` (default `staging`), `-dry-run`, and `-yes`, and its usage line
 is `caf deploy [flags] <service>`. There is no hosted cafaye platform to deploy
 to yet, so there is also no remote to authenticate against.
 
-**`caf` is not what deploys a cafaye service. `kamal` is, and `kit` ships the
-configuration it reads.** Three files, copied per service:
+:::caution[`caf` does not deploy a cafaye service. `kamal` does, and `kit` ships the configuration — three files, copied per service]
+
+`kit/templates/kamal/` holds the three files a Kamal deployment is made of:
 
 | File in `kit` | Copied to | What it is |
 | --- | --- | --- |
@@ -588,31 +626,45 @@ configuration it reads.** Three files, copied per service:
 | `templates/kamal/kamal-backup.yml.erb` | `config/kamal-backup.yml` | what to back up, where, and for how long |
 | `templates/kamal/drill.sh` | `bin/drill` | a restore drill that drops its own scratch database |
 
-`deploy.yml.erb` is ERB because five values differ per operator rather than per
-service — `KIT_SERVICE`, `KIT_REGISTRY_ORG`, `KIT_REPO`, `KIT_WEB_HOST`,
-`KIT_APP_DOMAIN` — and it **raises by name** if one is unset rather than
-rendering an empty string, which YAML reads as a null list item and which
-surfaces three layers away as "cannot find a host". `deploy_timeout` is 180
-seconds rather than Kamal's 30 for the same class of reason: a container booting
-against a loaded host needs longer than 30 seconds to answer its first probe,
-and a window that is too small produces a deploy that *cannot succeed* rather
-than one that fails. Copy the file and export the five; do not fork it per
-language, because the only thing that genuinely differs is the migration
-command.
+**Adoption is partial, and what exists today is measured rather than claimed.**
+Three repositories have a `config/deploy.yml`: **`identity` and `courier` carry
+kit's template** (as of 2026-10-01), and **`billing`'s is the stock
+Rails-generated file from its first commit**, with the whole `proxy:` and
+`accessories:` blocks commented out. Two have a `config/kamal-backup.yml` —
+`identity` and `courier`. **No repository has `bin/drill`.** And no service has
+been deployed through any of it: there is no `web` server behind any of these
+files. So `docker build` + `docker run` below is still the real path, and the
+Kamal files are the shape to adopt when you want backups. [Backup and
+restore](/runbooks/backup-and-restore/) is where this gap was measured, and it
+tells you which of the seven services have adopted what.
 
-**No service in the fleet has adopted this yet** — only `billing` has a
-`config/deploy.yml` at all, and it is the stock Rails-generated one with its
-accessories commented out. Treat it as a documented mechanism you have to switch
-on, not as a fleet default. [Backup and
-restore](/runbooks/backup-and-restore/) states what it does and what it does
-not cover.
+Three things about the template that are worth knowing before you copy it, because
+all three are counter-intuitive:
 
-**Ruby is on your machine, never on the server.** `kamal` is a Ruby gem and
-always has been; there is no non-Ruby Kamal. The Postgres and backup accessories
-are ordinary containers that ship their own Ruby, and the service images are
-precompiled binaries — so an Elixir, Go, Python, TypeScript or Rust service
-needs no Ruby runtime on the host to be deployed. What needs Ruby is the
-operator's laptop, because `kamal` is what you run from it.
+- **`deploy.yml.erb` is ERB** because five values differ per operator rather than
+  per service — `KIT_SERVICE`, `KIT_REGISTRY_ORG`, `KIT_REPO`, `KIT_WEB_HOST`,
+  `KIT_APP_DOMAIN` — and it **raises by name** if one is unset rather than
+  rendering an empty string, which YAML reads as a null list item and which
+  surfaces three layers away as "cannot find a host". Copy the file and export the
+  five; do not fork it per language, because the only thing that genuinely
+  differs is the migration command.
+- **`deploy_timeout` is 180 seconds rather than Kamal's 30** for the same class
+  of reason: a container booting against a loaded host needs longer than 30
+  seconds to answer its first probe, and a window that is too small produces a
+  deploy that *cannot succeed* rather than one that fails. **And its
+  `proxy.healthcheck.path` is `/up`, which is wrong** — see the caution further
+  down.
+- **`kamal` is a Ruby gem, so your machine needs Ruby.** Not the service image —
+  a service image never needs Ruby, whatever its language — and not the server.
+  The `backup` accessory ships its own Ruby inside the container. Only the
+  operator's machine carries the requirement, and it comes from Kamal rather than
+  from cafaye.
+- **`kit`'s deploy tooling is not remote.** `templates/bin/deploy.sh` runs a
+  production-*shaped* deployment — health gates, rollback, credential injection —
+  against a **local Docker daemon**. Pointed at your own machine it is a local
+  production-shaped run, and it does not become a remote deploy by being called
+  from a laptop.
+:::
 
 **And, independently of all that, you can still build and run an image
 yourself.** Every service ships a multi-stage, non-root Dockerfile, and they are
@@ -641,7 +693,7 @@ logs.
 | `darkroom` | `docker build -f docker/Dockerfile -t darkroom .` | 8080 | a Rust static binary; **the Dockerfile is under `docker/`, not the root** |
 | `muse` | `docker build -t muse .` | 8000 | `python:3.14-slim` |
 | `guard` | `docker build -t guard .` | 8080 | `oven/bun:1.3.12-slim` |
-| `parlor` | `docker build -t parlor .` | 3000 | `node:22.22.2-slim`, `ENV PORT=3000` |
+| `parlor` | `docker build -t parlor .` | 3000 | `node:22-slim`, `ENV PORT=3000` — the build stages pin `node:22.22.2-slim`, the runtime stage does not |
 
 **Two of those build lines used to carry flags that do not exist.** `courier`'s
 Dockerfile declares no `SERVICE_NAME` build argument, and its compose file passes
@@ -691,27 +743,32 @@ correctly.
 table above for `/v1/*` because `guard` routes nothing yet: `/v1/me` proves the
 auth chain and forwards nothing.
 
-:::caution[kit's proxy healthcheck is `/up`, and only `billing` serves it — as a *boot* check]
+:::caution[kit's proxy healthcheck path is `/up`, and `/up` is a *boot* check]
 `config/deploy.yml.erb` sets `proxy.healthcheck.path: /up` with a 2-second
-interval, and `kamal deploy` **gates the rollout on it**. Two things about that
-are worth knowing before you rely on it:
+interval and a 5-second timeout, and `kamal deploy` **gates the rollout on it**.
+The comment immediately above that line calls it *"A READINESS endpoint, not a
+liveness one"*, and for every cafaye service that comment is wrong:
 
-1. **`/up` is `billing`'s only, and it is Rails' built-in boot check**
-   (`get "up" => "rails/health#show"` in its routes). It answers 200 if the
-   application booted and **does not touch the database**. `billing`'s readiness
-   is `/readyz`, and that is the endpoint that names
-   `{"status":"error","checks":{"database":"error"}}`. So the rollout gate on
-   `billing` is a liveness signal wearing a readiness path's name — the opposite
-   of what the template's own comment above that line says it is.
-2. **The other five services do not serve `/up` at all.** `identity`,
-   `courier`, `muse`, `darkroom` and `guard` serve `/healthz` and `/readyz`, so a
-   proxy pointed at `/up` gets a 404 and the rollout never goes green.
+- **`/up` is not a cafaye path at all.** `identity`, `courier`, `muse`,
+  `darkroom`, `guard` and `parlor` serve `/healthz` and `/readyz`, so a proxy
+  pointed at `/up` gets a 404 and the rollout never goes green. `identity` and
+  `courier` are the two that carry kit's template, and **both changed the path
+  to `/readyz`** while they were in it — the change is in each file, commented.
+- **`billing` is the one service that serves `/up`**, and it is Rails' built-in
+  boot check (`get "up" => "rails/health#show"` in its routes). It answers 200 if
+  the application booted and **does not touch the database**; `billing`'s
+  readiness is `/readyz`, and that is the endpoint that names
+  `{"status":"error","checks":{"database":"error"}}`. `billing` does not use kit's
+  template, though — its `config/deploy.yml` is the stock Rails-generated file
+  with the whole `proxy:` block commented out, so it has no healthcheck path at
+  all today.
 
-**Change the path in `config/deploy.yml` to whatever your service actually
-serves, and prefer `/readyz`.** A container that answers 200 while its database
-is unreachable is a container the deploy will happily call healthy — and with a
-2-second interval and a 5-second timeout that window is small enough to look
-fine and large enough to matter.
+**So no service in the fleet is deploying against `/up`; the template is simply
+wrong about its own default.** Change the path in `config/deploy.yml` to whatever
+your service actually serves, and prefer `/readyz`. A container that answers 200
+while its database is unreachable is a container the deploy will happily call
+healthy — and with a 2-second interval and a 5-second timeout that window is
+small enough to look fine and large enough to matter.
 :::
 
 ### What is not in this path yet
@@ -735,10 +792,15 @@ sentences.** `core` ships seven telemetry schemas and enforces the contract;
 `courier`, `billing`, `identity` and `muse` each wire an OTel SDK and export
 traces to whatever `<SERVICE>_OTEL_ENDPOINT` names, defaulting to the collector
 that ships with the stack. **No collector is deployed anywhere in a cafaye
-environment**, so a service started from its own `docker-compose.yml` — which
-brings up Postgres and the service and nothing else — is exporting to a host
-that is not there. Copy `kit`'s `bin/dev` into the service repository and it
-fetches the whole stack, brings it up, and prints the URLs.
+environment**, so a service started from its own `docker-compose.yml` is
+exporting to a host that is not there.
+
+Getting a collector takes `bin/dev`, which **three of the seven repositories
+already carry** (`identity`, `courier`, `billing`) — it fetches kit's whole stack
+at the ref in `kit.ref`, brings it up, and prints the URLs. The other four have
+no `bin/dev`, and copying it is the fix: `cp <kit>/templates/bin/dev.sh ./bin/dev`
+(plus a `kit.ref` pinning a 40-character commit sha, because `bin/dev` refuses a
+branch name before it makes any network call).
 [Observability](/observability/) has the per-service table and the three states,
 and says what the gap costs you.
 

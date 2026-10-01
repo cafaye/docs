@@ -20,9 +20,17 @@ the worst kind of provenance claim because it looks checkable and is not.
 Naming a commit here would only be honest if somebody re-ran the whole
 procedure against that commit. So this page states the one thing that is
 verifiable without re-running it — the routes, the role order and the refusal
-wording are read from `identity`'s current `master` (`08e346d`) — and quotes the
-session as a session. **Re-run it against your own build before you rely on a
-byte of it.** [Running the gates](/running-the-gates/) has the commands.
+wording are read from `identity`'s current `master` — and quotes the session as a
+session. **Re-run it against your own build before you rely on a byte of it.**
+[Running the gates](/running-the-gates/) has the commands.
+
+**And the transcript is older than the code.** `identity` has grown routes since
+it was taken: `/v1/accounts/{accountID}/api-keys`,
+`/v1/accounts/{accountID}/oidc-clients`, `/v1/accounts/{accountID}/admin/audit-log`
+and `/v1/accounts/{accountID}/admin/invitation-revocations`. **None of them is
+on this page, and this page is still the procedure for the ones it does cover.**
+Treat the quoted bodies as the shape rather than as a byte-exact contract, and
+re-run before you rely on a quoted status code.
 :::
 
 ## What you need
@@ -230,16 +238,25 @@ password on your account" into the one message a hijacked session cannot get
 past.
 
 **But nobody sends `team_invitation`.** `courier` has that template and
-`identity`'s client can populate it, and `identity` still does not call it. So
-the gap is not the mail system and not the template — it is one unmade call.
-`identity`'s own source says so where the token is minted: *"In a later packet
-the invitation email is handed to courier and this field goes away — until
-courier exists, returning the token is the only way an invitation can be
-delivered at all."* `courier` exists. That packet has not landed.
+`identity`'s client can populate it, and `identity` still does not call it — the
+constant exists, with a comment saying so, so the drift test has something to
+compare against. So the gap is not the mail system and not the template — it is
+one unmade call, and nothing in the platform delivers events off a bus to make
+it for you.
+
+**If you *have* configured `courier` with an SMTP adapter, that still does not
+send this.** Two independent reasons, both worth stating so nobody assumes
+configuring the adapter fixed the step: courier's adapter is chosen by
+`COURIER_MAIL_ADAPTER` and courier **refuses to start in production without
+one**, and configuring it does not create a caller. The invitation token is in
+the response body above; that response is the delivery mechanism. See [rotating
+secrets](/runbooks/secret-rotation/#6-an-email-provider-credential-in-courier--required-not-optional)
+for what the adapter does and does not switch on.
 
 **So: deliver the token yourself** — out of band, to the address you just
-invited, by a channel you trust. Read it out of the 201, because there is no
-endpoint that re-reads it and no column that stores it; only a digest is kept.
+invited, by a channel you trust. Read it out of the 201, because
+`account_invitations` stores `token_digest` and **there is no column that could
+hold the raw token afterwards** — a database dump yields no usable invitation.
 
 `expires_at` is seven days out. An expired invitation is `410`, and a used one
 is `410`; both mean "ask for a new one", and re-posting to `/invitations` is the
@@ -424,7 +441,7 @@ DSN, which is the one convenience of database-per-service worth having.
 
 | Step | Why not | What to do |
 | --- | --- | --- |
-| The invitation email | `courier` can send and `identity` can call it, but **nobody sends `team_invitation`** — one unmade call, not a missing template | Send the token yourself, from the 201 |
+| The invitation email | `courier` **can** send and `identity` **can** call it, but nobody sends `team_invitation` — one unmade call, not a missing template and not a missing adapter | Send the token yourself, out of band, from the 201 |
 | A billing customer | `billing` is a separate deployment with its own database | Create plans and customers through `/v1` once you need them — [billing](/services/billing/) |
 | A `guard` role mapping | `guard` verifies tokens; role enforcement is `identity`'s | Nothing. `/v1/*` is bearer-only and `identity` is the authority |
 | Any event delivery | No publisher loop runs | Build the consumer yourself, or read the outbox |

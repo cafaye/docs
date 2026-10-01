@@ -10,6 +10,129 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Fixed
 
+<!-- TWO ENTRIES, NOT ONE. `docs-23` and `docs-23b` were two sessions working in
+     this repository at the same time, unaware of each other, and both were
+     right: both found the same defect class — procedures and commands that do
+     not run — independently, and neither is a subset of the other. They are
+     recorded as two entries, each in its own session's words, rather than
+     merged into one. Newest first. -->
+
+- **The other four runbooks, and six pages outside `runbooks/`, described tooling
+  from the era before the Kamal pivot.** The backup runbook was rewritten today
+  against `kamal-backup` because it named `templates/backup/`,
+  `templates/bin/backup.sh` and `docker/Dockerfile.backup` — all deleted. The
+  defect was not confined to that page, and the most serious instance was not a
+  deleted path at all: **three of the seven services cannot start the stack the
+  site tells you to start.**
+
+  Every claim below was re-derived by reading the service repositories,
+  `kit/templates/kamal/`, and `docker compose config` run against each compose
+  file — not by remembering what the pages said.
+
+  - **`docker compose up -d` does not work in `identity`, `courier` or
+    `billing`, and the site told readers to run it in all three.** Their
+    `docker-compose.yml` is an **override**, not a stack: it carries the service,
+    its database name and role, and the crash layer, and deliberately has **no
+    `image:` on `postgres`** because kit's fetched stack ships that container.
+    Run alone it stops with `service "postgres" has neither an image nor a build
+    context specified` — verified by running `docker compose config --services`
+    in each. `darkroom`, `muse` and `guard` do have standalone stacks (`muse`
+    needs `MUSE_VAULT_KEY`). **Those three use `bin/dev`**, which every one of
+    them carries. Corrected on `runbooks/index`, `runbooks/service-down`,
+    `getting-started`, `running-the-gates`, `pilot`, `observability`, and the
+    `identity`, `courier` and `darkroom` service pages.
+
+  - **`POSTGRES_PORT` does not exist.** Four pages told the reader to remap a
+    colliding port with `POSTGRES_PORT=5433 docker compose up -d`. **No service
+    repository reads that variable** — the only `POSTGRES_PORT` in the fleet is
+    inside `identity`'s `gate.yml` prose and `parlor`'s e2e stack's own
+    `E2E_IDENTITY_POSTGRES_PORT`. The variable that exists is **`KIT_POSTGRES_PORT`**,
+    it lives in **kit's `.env`**, and it moves kit's shared container — a
+    service's own compose file may not, because a second compose file's `ports:`
+    list is appended rather than substituted. All four pages now name the real
+    variable and say why the old advice was inert.
+
+  - **The Postgres port arithmetic was wrong in the same sentence.** The site
+    said `identity`, `billing`, `courier` and `darkroom` all publish 5432.
+    **Only `darkroom` (5432) and `muse` (5433) publish a Postgres port on the
+    host**; the other three publish none and are reached over the compose network
+    by service name. So the collision that actually bites is `darkroom`'s 5432
+    against a native Postgres — and it is a nasty one, because `pg_isready`
+    does not authenticate: **the container reports healthy while your command
+    reaches the wrong database** and fails with `role "darkroom" does not
+    exist`, which reads like a missing migration.
+
+  - **`muse` is on Postgres 17, not 18.** It was moved down deliberately — one
+    platform, one major version, one upgrade path — and `topology.md` and
+    `service-down.md` both still said 18. Corrected, with the reason and with
+    `muse`'s own migration note for a developer holding a real 18 data
+    directory (incompatible on-disk formats; 17 refuses rather than corrupts).
+
+  - **Two keys that make a database dump unreadable were missing from the
+    rotation inventory.** `COURIER_SECRET_BOX_KEY` seals every
+    `webhook_endpoints.secret` and `MFA_ENCRYPTION_KEY` seals
+    `mfa_credentials.secret_ciphertext`. Both are sealing keys with no re-seal
+    tooling, so both belong beside `MUSE_VAULT_KEY` as **non-rotatable** — and
+    `MFA_ENCRYPTION_KEY` fails **closed**, so a bad rotation locks users out of
+    their own second factor. New section 7 on `secret-rotation`.
+
+  - **`courier` does ship an email adapter, and three pages said it did not.**
+    `courier-webhooks`, `secret-rotation` and `tenant-provisioning` all stated
+    that *"no provider adapter is configured, so nothing leaves the process"*.
+    **It ships `Swoosh.Adapters.SMTP`**, selected by `COURIER_MAIL_ADAPTER` —
+    and the real behaviour is the opposite of a silent no-op: **courier refuses
+    to start in production without it**, and refuses `none` in production too,
+    because that adapter reports every send as delivered and mails nobody. New
+    section 8. What remains true is narrower: `identity` still has no caller
+    into `courier`, so **the invitation token in `tenant-provisioning` step 6 is
+    still yours to send** — and configuring the adapter does not create one.
+
+  - **`tenant-provisioning` pinned its transcript to `27fe8a6`, a commit that no
+    longer exists in `identity`'s history.** A hash you cannot resolve is not
+    evidence. The pin is gone; the routes below were verified present against
+    `08e346d`, and the page now says plainly that the quoted bodies are the shape
+    rather than a byte-exact contract, and that `identity` has grown routes this
+    page does not cover (`api-keys`, `oidc-clients`, `admin/audit-log`,
+    `admin/invitation-revocations`).
+
+  - **`billing-webhooks` did not say `billing` is out of launch scope, and it
+    implied a deployed stack that does not exist.** Its SQL and status-code table
+    were checked against `billing`'s source and hold (`processor_webhooks` with a
+    UNIQUE index on `stripe_event_id`, `STRIPE_WEBHOOK_SECRETS` as a
+    comma-separated list, `STRIPE_WEBHOOK_TOLERANCE`, the eight-row Stripe
+    mapping, the four-database split). The **network path** — ports, firewall,
+    TLS — is the part the reader is inventing, and the page now says so instead
+    of presenting a topology nobody has deployed.
+
+  **Nothing on this site claimed a service must install Ruby on the host, and the
+  one page that discusses it is correct** — `backup-and-restore` already states
+  that a service image never needs Ruby, that the backup accessory ships its own,
+  and that only the operator's machine does, because `kamal` is a Ruby gem. That
+  sentence is now repeated where a reader meets the deployment mechanism for the
+  first time (`getting-started`), because the requirement comes from Kamal and
+  is easy to misattribute to the platform.
+
+  Two findings are **recorded rather than fixed**, because a service repository
+  is read-only from this one and its own README is what contradicts its code:
+
+  - **`courier`'s README documents `docker compose up --build` and its `bin/prime`
+    header says `docker compose up -d db`.** Neither can work: the compose file
+    is an override (as above), and there is no `db` service — it is called
+    `postgres`, and it belongs to kit's stack on `KIT_POSTGRES_PORT`, not
+    `localhost:5432`. The pages here are corrected; the README is kit's and
+    courier's to fix.
+  - **`identity`'s README documents `docker compose up -d` and its `gate.yml`
+    asserts `docker-compose.yml` publishes `${POSTGRES_PORT:-5432}`.** Both are
+    wrong for the same two reasons: the compose file publishes no Postgres port,
+    and it cannot start a database alone. `gate.yml`'s prose is how the phantom
+    `POSTGRES_PORT` survived into four pages of this site in the first place,
+    which is worth knowing before the next page inherits it again.
+
+<!-- `worker/docs-23`, ab9ad69, 2026-10-01. The entry above is `docs-23b`,
+     merged to master as 4d06488 on 2026-10-02. Both are kept whole, and this
+     merge (docs-25) resolved the collision between them without folding the
+     two accounts into one. -->
+
 - **The other four runbooks were written in the same era as the backup one, and
   carried the same class of defect: procedures that do not run.** Checked every
   runbook plus `guides/`, `getting-started`, `pilot` and `upgrading` for
@@ -32,122 +155,6 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
   `running-the-gates`, `services/identity`, `services/courier`. All now say
   `bin/dev`, which is what ships in those three repositories.
 
-- **The Postgres port table was wrong in every row that mattered.** The site
-  said four repositories publish 5432 and that `POSTGRES_PORT=5433` moves one.
-  Measured against the compose files: **only `darkroom` publishes 5432** and
-  only `muse` publishes 5433. `identity`, `courier` and `billing` publish nothing
-  of their own and use `kit`'s container, published on **15500**. **No compose
-  file in the fleet reads `POSTGRES_PORT`** — the variable that exists is
-  `KIT_POSTGRES_PORT`, it is `kit`'s rather than a service's, and it is set in
-  `.env`.
-
-  The real reason you run those three one at a time is not a port at all: they
-  share one Postgres container and each **renames its database**
-  (`POSTGRES_DB: identity` / `courier` / `billing`), and compose merges those
-  overrides last-one-wins. Two up together and one service's DSN points at a
-  database that does not exist — which presents as
-  `role "…" does not exist` and reads exactly like a wrong password.
-
-- **`muse` was documented as `postgres:18-alpine`.** It is not, and has not been:
-  its compose file records the move off 18 onto `postgres:17-alpine`. Worse, the
-  claim that replaced it — "every Postgres in the fleet is 17" — would have been
-  **wrong too**, because `bin/dev up` starts **`postgres:16.6-alpine`**.
-  `kit`'s compose file defaults `KIT_POSTGRES_TAG` to `17-alpine` but the `.env`
-  it creates on a first run comes from `kit`'s `.env.example`, which pins
-  `16.6-alpine`. The default in the compose file is not the version you get, and
-  it matters because `pg_dump` is silent about a server that is much older and
-  loud about one that is newer.
-
-- **`getting-started` documented two `docker build` invocations that cannot
-  parse.** `courier`'s line passed `--build-arg SERVICE_NAME=courier`; that
-  Dockerfile declares no such argument and its compose file passes no `args:`,
-  so the flag did nothing while looking like it configured something. `darkroom`
-  passed `--build-arg --features s3`, and `--build-arg` needs a `NAME[=VALUE]`
-  after it, so Docker refuses before it reads a Dockerfile
-  (`flag needs an argument: --build-arg`). `docker/Dockerfile` already runs
-  `--features s3`, so the deployment build needs no flag at all — a third page,
-  `architecture/topology`, carried the same invalid flags and now does not
-  either.
-
-- **`kit`'s proxy healthcheck is `/up`, which is a liveness check that only
-  `billing` serves.** `deploy.yml.erb` comments `/up` as "a READINESS endpoint,
-  not a liveness one" and `kamal deploy` gates the rollout on it. In `billing`,
-  `/up` is `rails/health#show` — it answers 200 if the app booted and **does not
-  touch the database**; the readiness endpoint is `/readyz`. The other five
-  services do not serve `/up` at all, so a proxy pointed at it gets a 404 and
-  the rollout never goes green. Both facts are now stated, with the caveat that
-  the template is `kit`'s to fix.
-
-- **`courier` can send mail now, and two runbooks said it could not.**
-  `tenant-provisioning` and `secret-rotation` both said *"no provider adapter is
-  configured, so nothing leaves the process"*, and named the Swoosh pipeline and
-  its notification store as the reason. As of `courier` `a8f15cc` the adapter is
-  `COURIER_MAIL_ADAPTER=smtp` with the `COURIER_SMTP_*` variables, it ships
-  `gen_smtp`, and a courier with no adapter configured **refuses to boot** — the
-  fix for a `Swoosh.Adapters.Local` default that accepted every send, wrote an
-  outbox row and published `courier.email.delivered` for mail nobody received.
-
-  The gap that remains is smaller and is now named exactly: **nobody sends
-  `team_invitation`.** `courier` has the template, `identity` has a client for
-  `POST /v1/messages` and sends `password_reset` and `welcome` through it, and
-  the invitation is still one unmade call. So the operator still delivers the
-  token — for a completely different reason than the page gave.
-
-- **Two secrets were missing from the rotation inventory, and both are real.**
-  `secret-rotation` listed an email provider credential as "**n/a yet**" and had
-  no row for a scoped API token at all. Added the SMTP credential (with the full
-  variable table and the refusal that makes it required) and identity's
-  `api_keys` credential, read out of `migrations/00011_api_keys.sql` and the
-  router: the token is returned **once** and only a SHA-256 digest is stored,
-  `expires_at` is required and capped at 365 days by a `CHECK` in the database,
-  and mint/list/revoke are all **owner-only**. Rotation is an issuance rather
-  than a cutover, so both keys are valid at once. Also recorded that
-  `identity.api_key.revoked` covers expiry as well as revocation and **there is
-  no sweeper**, so the expiry half is never emitted.
-
-- **`tenant-provisioning` cited a commit that does not exist.** It claimed every
-  quoted response came from "a real session against `identity` at commit
-  `27fe8a6`". That sha is not in `identity`'s history — `git cat-file` refuses
-  it — and it is a commit in **`caf`**, so the page named the wrong
-  repository's history. Replaced with what is verifiable without re-running
-  anything: the routes, the role minimums and the members-list defect read off
-  `identity` `08e346d`, with an instruction to re-run before relying on it.
-  Step 8 also used `$BOB`, which nothing in the runbook ever set; step 7 now
-  exports it from the one response that carries a `user_id`.
-
-- **`bin/dev up` does not currently start `identity`, `courier` or `billing`, and
-  the site said nothing.** This is the one finding in this packet that is a
-  defect in another repository rather than in the prose, so it is recorded here
-  rather than quietly worked around. All three compose files set
-  `logging.driver: syslog` with `syslog-address: "tcp://otel-collector:15514"`,
-  and **Docker resolves a log-driver address with the host's resolver, not the
-  compose network's** — `otel-collector` exists only inside the network. Run
-  `bin/dev up` and Postgres, NATS, Redis, the collector, Grafana, Tempo, Loki
-  and Mimir all come up healthy, and then:
-
-  ```
-  Error response from daemon: failed to create task for container:
-  failed to initialize logging driver: dial tcp: lookup otel-collector on
-  0.250.250.200:53: no such host
-  ```
-
-  with nothing about the database in it. It reproduces with no cafaye involved
-  at all: `docker run --rm --log-driver syslog --log-opt
-  syslog-address=tcp://otel-collector:15514 alpine:3 echo hi`.
-
-  So the answer to "the port answers nothing" is currently **not** a crash to
-  investigate: there is no container, no log and no readiness body. Both
-  `service-down` and `getting-started` now say so, and point at the fix in the
-  service repositories rather than shipping a workaround as if it were the
-  procedure. `identity`, `courier` and `billing` own this one.
-
-- **A container name is not a service name.** `service-down` told a reader to
-  `docker logs --since 30m "$SERVICE"`. Compose names a container
-  `<project>-<service>-1` and the project here is **not** the repository —
-  `kit`'s stack sets `name: ${KIT_STACK_NAME:-cafaye}`, so `identity` is
-  `cafaye-identity-1` and its database is `cafaye-postgres-1`. `docker logs
-  identity` says `No such container`, which reads like "it is not running" rather
-  than "you named it wrong".
 
 - **The backup runbook was a procedure for a toolchain kit deleted.** It told an
   operator to run a script that is not there. kit-20 removed

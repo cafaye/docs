@@ -31,12 +31,16 @@ reason is a missing file rather than a broken one.
 
 Verified across the seven service repositories on this branch:
 
-- **None of them has a `config/kamal-backup.yml`.** That file is what says what
-  to back up and where to put it; without it there is no backup configuration to
-  run.
-- **Only `billing` has a `config/deploy.yml` at all**, and it is the stock
-  Rails-generated file rather than kit's template — its `accessories:` block is
-  commented out and there is no `backup` accessory in it.
+- **`identity` and `courier` have both a `config/deploy.yml` and a
+  `config/kamal-backup.yml`** — they adopted kit's templates on 2026-10-01. The
+  other five have neither. A `config/kamal-backup.yml` is what says what to back
+  up and where to put it, so the configuration exists for those two and has never
+  been run: nothing has been deployed, so nothing has been backed up.
+- **`billing` has a `config/deploy.yml`** and it is the stock Rails-generated
+  file rather than kit's template — its whole `proxy:` and `accessories:` blocks
+  are commented out, so it has no `backup` accessory in it either.
+- **No repository has `bin/drill`**, which is step 6 of the adoption below and
+  the only thing that proves the first five worked.
 
 So a self-hosted install is **not** protected until somebody copies kit's two
 templates in, sets the four secrets, boots the accessory and drills it. Those
