@@ -31,8 +31,9 @@ the real `caf` binary and the real service repositories:
   contracts and the order to fix it in.
 - [Tenant provisioning](/runbooks/tenant-provisioning/) — create an account,
   invite somebody, promote them, and verify it. Quoted from a live session.
-- [Backup and restore](/runbooks/backup-and-restore/) — `pg_dump`, the bucket
-  `pg_dump` will not save for you, and the restore verification step.
+- [Backup and restore](/runbooks/backup-and-restore/) — what the scheduled
+  `pg_dump` covers, the bucket it will not save for you, the data you lose when
+  a database is destroyed, and the drill that proves a restore works.
 - [Rotating secrets](/runbooks/secret-rotation/) — Stripe, provider
   credentials, database passwords, object-storage keys, and the one that cannot
   be rotated.
