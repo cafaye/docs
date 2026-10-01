@@ -549,11 +549,17 @@ comes. [Troubleshooting](/troubleshooting/) has the entry, and
 actually affects — it matters if you wrote your own publisher loop, and not at
 all if you did not.
 
-**Observability is specified, not deployed.** `core` ships seven telemetry
-schemas and enforces the contract; no collector and no stack are running, and
-`muse` is the only service exporting any signal.
-[Observability](/observability/) says which, and what that means for the error
-dashboard you were about to build.
+**Observability is instrumented and not deployed, and those are two different
+sentences.** `core` ships seven telemetry schemas and enforces the contract;
+`courier`, `billing`, `identity` and `muse` each wire an OTel SDK and export
+traces to whatever `<SERVICE>_OTEL_ENDPOINT` names, defaulting to the collector
+that ships with the stack. **No collector is deployed anywhere in a cafaye
+environment**, so a service started from its own `docker-compose.yml` — which
+brings up Postgres and the service and nothing else — is exporting to a host
+that is not there. Copy `kit`'s `bin/dev` into the service repository and it
+fetches the whole stack, brings it up, and prints the URLs.
+[Observability](/observability/) has the per-service table and the three states,
+and says what the gap costs you.
 
 ## What to read next
 

@@ -1,25 +1,89 @@
 ---
 title: Observability
-description: The telemetry contract core owns, what is deployed today, and the three things that are specified but not yet running.
+description: The telemetry contract core owns, which services emit spans today, and the one thing that is specified but not yet deployed.
 ---
 
-**What is specified. What is deployed is a different, smaller list, and the two
-are not the same thing.** Read the status line first: this page is mostly a
-contract you can code against and a list of what has not been built yet.
+**What is specified, what is instrumented, and what is deployed are three
+different lists, and this page keeps them apart.** Most of it is a contract you
+can code against; the part a buyer needs is the per-service table below, and the
+honest part of that table is its right-hand column.
 
-:::caution[Status: the contract is shipped; the stack is not running]
+:::caution[Status: the contract is shipped, four services emit spans, and
+nothing anywhere is deployed to receive them]
 `core` owns **seven telemetry schemas** and every rule in this page is one of
-them, enforced by a test. **No collector is deployed and no observability stack
-is running.** The OpenTelemetry Collector and the self-hosted
-Grafana/Loki/Tempo/Mimir stack are in flight; `kit` carries the compose
-template and the six-language SDK snippets, and neither is wired to a running
-service yet.
+them, enforced by a test.
 
-**Exactly one service exports any signal at all**: `muse`, and it exports
-traces. `identity`, `billing`, `courier` and `guard` export none — every one of
-them serves HTTP and so owes the `/healthz`–`/readyz` split, and that is the
-whole of its telemetry surface today.
+**`courier`, `billing`, `identity` and `muse` each wire an OpenTelemetry SDK and
+export traces from their own code**, to whatever endpoint you point
+`<SERVICE>_OTEL_ENDPOINT` at. The endpoint defaults to the collector that ships
+with the stack, so it is on by default rather than opt-in.
+
+**No collector is deployed in any cafaye environment.** That is the true
+negative, and on its own it is the least useful sentence on this page. The
+stack is not a design in progress: `kit` ships it as templates — the collector
+config, the Tempo/Loki/Mimir configs, the Grafana provisioning, and two
+dashboards — and `bin/dev` fetches the whole thing from a pinned ref and brings
+it up. A service repository's own `docker-compose.yml` starts Postgres and the
+service and nothing else, so `docker compose up` on its own leaves you with a
+service pointing at a collector that is not there.
 :::
+
+## The three states
+
+| State | What it means | Who has it |
+| --- | --- | --- |
+| **Spec'd** | `core` owns the contract and a rule exists, enforced by a test | every service, and the collector |
+| **Instrumented** | the service wires an SDK and emits the signal from its own code, to an endpoint you supply | `courier`, `billing`, `identity`, `muse` (traces) |
+| **Deployed** | a collector is running and spans are landing somewhere you can read | **nobody.** Not in any cafaye-operated environment |
+
+These are not three ways of saying "less done".
+A service can be fully instrumented with nothing to export to — which is the
+normal state of a self-hoster's first day, and the state of every cafaye
+environment today — and the work to close the gap is one variable and, for the
+stack itself, one command.
+
+## Per service
+
+Read `core`'s
+[`fleet.yml`](https://github.com/cafaye/core/blob/master/fleet.yml) for the
+machine-readable version of this table, and
+[Running the gates](/running-the-gates/) for the tier that checks this page
+against it.
+
+| Service | Spec'd | Instrumented | Deployed | What it emits |
+| --- | :---: | :---: | :---: | --- |
+| [`courier`](/services/courier/) | yes | **yes** | no | traces |
+| [`billing`](/services/billing/) | yes | **yes** | no | traces |
+| [`identity`](/services/identity/) | yes | **yes** | no | traces |
+| [`muse`](/services/muse/) | yes | **yes** | no | traces |
+| [`darkroom`](/services/darkroom/) | yes | no | no | correlated logs only — see below |
+| [`guard`](/services/guard/) | yes | no | no | nothing |
+| `parlor` | yes | no | no | nothing |
+
+**Four services export traces and none of them exports metrics or logs.**
+That is not modesty, it is what the code says: none of the four installs a
+meter.
+`courier` cannot — the Erlang SDK has no metrics API at all, which is why its
+`lib/courier/telemetry.ex` argues the point from a directory listing rather than
+from taste.
+Metrics exist in the stack anyway: kit's collector derives them from spans with
+the `spanmetrics` connector, **after** the redaction processor, so a metric
+cannot carry a dimension the boundary would have stripped.
+
+**`darkroom` is a fourth state, and it is worth naming rather than rounding to
+"no".**
+It has no `opentelemetry` dependency and no exporter; it uses the Rust `tracing`
+facade with a JSON subscriber and keeps its own `trace_id` in a task-local, so
+the response header, the problem body, and every log line under the request read
+the same value.
+That is a real correlation story and it is not an OTLP span story.
+Its log records do reach the stack, indirectly: the collector's `syslog/crash`
+receiver reads every container's stderr, so a `tracing` line becomes a log
+record in Loki with no per-language SDK at all.
+
+**`guard` and `parlor` emit nothing.**
+They owe the probe contract — `/healthz` and `/readyz` — and that is the whole
+of their telemetry surface.
 
 **The decision that is settled: on by default, and exercised in development.**
 A developer working on cafaye sees real traces, real metrics and a real error
@@ -33,7 +97,10 @@ rather than an afterthought:
 - **One variable to turn it off.** Unset the variable and the service gets a
   genuine no-op. `core` asserts that path rather than trusting it: the schema
   declares `required` as `const: false`, and a test named for the no-op path
-  fails if unsetting the endpoint stops being declared as free.
+  fails if unsetting the endpoint stops being declared as free. `OTEL_SDK_DISABLED`
+  and `<SIGNAL>_EXPORTER=none` are the OpenTelemetry specification's own kill
+  switches, and the services read those rather than reimplementing "disabled" in
+  four languages.
 
 The specs live in
 [cafaye/core](https://github.com/cafaye/core/blob/master/docs/observability.md)
@@ -150,19 +217,34 @@ A **low-cardinality class**: snake_case, at most 64 characters, drawn from a
 vocabulary the whole fleet shares. Never a message, never a stack trace, never
 an interpolated value.
 
-:::caution[No service has been migrated to this vocabulary yet]
-`muse` — the only service that exports a signal at all — still emits
-`error.type = "ProviderAuthError"`, and its own test asserts that exact string.
-That is a per-service exception class name, which is exactly what the spec
-forbids, because it means `error.type` means something different in Python than
-it would in Go or Elixir, and "one place to see all errors for the whole system"
-becomes six places.
+:::caution[Two of the four exporters are on core's vocabulary; `muse` is not,
+and `billing` is on a list of its own]
+`core`'s vocabulary is thirteen classes.
+`courier` and `identity` both carry all thirteen, and both collapse anything
+else to `_OTHER` — `identity` has a test that walks its list against core's
+schema, and `courier` has one per vocabulary member — so an error span from
+either aggregates across the fleet.
 
-The vocabulary is being closed into a bounded enum. **Migration is a later
-packet.** Until it lands, do not write a dashboard that groups on `error.type`
-across services — `muse` will not join it, and a panel that is empty for one
-service and full for another reads as "no errors in `muse`", which is the worst
-possible reading of a real error.
+**`muse` is not.**
+It still emits `error.type = "ProviderAuthError"`, a per-service exception class
+name, and its own test asserts that exact string.
+That is precisely what the spec forbids, because it means `error.type` means
+something different in Python than it would in Go or Elixir.
+
+**`billing` is a third case, and it is a real drift rather than a rounding.**
+Its vocabulary is three values of its own — `unhandled_exception`,
+`routing_error`, `middleware_error` — and none of the three is in core's
+thirteen, so a billing error span would fail `traces.schema.json`.
+`billing`'s repository owns that fix; it is recorded in `core`'s `fleet.yml`
+rather than fixed here, because a service repository is read-only from this one.
+
+The practical rule until all three agree: **do not write a dashboard that groups
+on `error.type` across all services.**
+A panel that is full for two services and empty for another reads as "no errors
+in `muse`", which is the worst possible reading of a real error.
+Group on the span status instead — which is what kit's shipped fleet-errors
+dashboard does, and it is the reason a cross-service error view is possible at
+all today.
 :::
 
 ## `/healthz` and `/readyz`
@@ -192,11 +274,32 @@ failure directions are machine-checked:
 
 `caf contract lint` reads these seven schemas alongside the event schemas, so a
 service's telemetry declaration is checked against `core` the same way its
-`cafaye.yml` is. `kit` carries the six-language OTel templates and the compose
-stack (Postgres, NATS, Redis, and the collector) for local development; the
-collector template ships with **only the `debug` exporter**, so a developer's
-laptop cannot send a span anywhere on its own, and every published port is a
-`${KIT_*}` substitution.
+`cafaye.yml` is.
+
+**`kit` carries the stack, and it is complete rather than a sketch.** Its compose
+templates are Postgres, NATS+JetStream, Redis, the OpenTelemetry Collector, and
+the four LGTM services behind it — Grafana, Loki, Tempo, Mimir — plus the
+six-language OTel snippets. The collector's three pipelines fan out for real:
+traces to Tempo, metrics to Mimir, logs to Loki, and `debug` alongside them as a
+local escape hatch that writes to the collector's own stdout. Every address is a
+`${KIT_*}` substitution, so pointing one at a backend you already run bypasses
+the shipped stack rather than extending it — which is the supported way to bring
+your own.
+
+**The redaction boundary is enforced in that collector, and the allowlist is
+derived rather than transcribed.** Every attribute `core` allows on a signal is
+in the collector's `allowed_keys` for that signal, and nothing is in it that
+`core` does not allow; `kit`'s gate reads `core`'s schemas off disk and compares
+both ways, printing the core commit it compared against. A metric cannot escape
+the boundary either, because `spanmetrics` runs after the redaction processor.
+
+**How you get it running.** Copy `kit`'s `bin/dev` into a service repository and
+run it: it fetches the stack from a pinned ref, brings it up with `--wait`,
+migrates, and prints the URLs. It is in `courier`, `billing` and `identity` today.
+`kit` proves the fetched stack actually runs rather than merely parsing —
+`tests/stack_live_test.sh` brings the whole thing up, sends real OTLP, and reads
+a trace back out of Tempo and a metric out of Mimir, asserting the redaction
+canary is in neither.
 
 **Known drift, recorded rather than papered over.** `muse` reads
 `MUSE_OTEL_EXPORTER_OTLP_ENDPOINT` — the OpenTelemetry standard spelling —
@@ -210,10 +313,23 @@ than after three more services have copied the spelling out of `muse`'s code.
 Stated so a reader can tell the difference between "not built yet" and "not
 planned":
 
-- **No collector is deployed**, and no Grafana/Loki/Tempo/Mimir stack is running.
-- **There is no shared error dashboard.** The attribute that would make one
-  possible is specified; the dashboard that would use it is not written.
-- **No service is migrated to the bounded `error.type` vocabulary.**
+- **No collector is deployed in any environment.** The stack is generatable and
+  `kit` has a test that runs it, but nothing in a cafaye-operated deployment
+  receives a span. This is the one line on this page that has no code behind it,
+  and it is the whole of what "not deployed" means.
+- **The shipped dashboards are provisioned, not curated, and they are new.** `kit`
+  ships two: *cafaye — every error in the fleet* (twelve panels, grouped on span
+  status rather than `error.type`) and *cafaye — local stack*. They come up on
+  first load with no configuration, and they are the reason a cross-service error
+  view is possible today rather than a thing you would have to write. What does
+  not exist is a dashboard maintained against a real incident.
+- **`muse` is not migrated to the bounded `error.type` vocabulary,** and
+  `billing` is on a divergent list of its own. `courier` and `identity` are on
+  core's thirteen. See [`error.type`](#errortype) above for what that means for
+  a panel.
+- **`darkroom`, `guard` and `parlor` export no OTel signal.** `darkroom` has a
+  real correlation story on `tracing` and reaches Loki through the collector's
+  stderr receiver; the other two owe the probes and nothing more.
 - **`core` owns the contract only.** There is deliberately no collector, exporter
   or per-language SDK in `core` — that is `kit`'s job and each service's. A rule
   added to `core` that no service implements is a rule that lies.

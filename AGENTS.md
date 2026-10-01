@@ -49,8 +49,10 @@ bin/prime             # or: mise run prime
   reads its vocabulary out of the repository's own prose rather than from a list
   written beside it, so there is one place that says what `caf` can do.
 - The counts are printed, because a check that reports nothing looks like a
-  check that found nothing: 103 shell fences, 11 JSON fences, 2 manifests, 6
-  `caf` subcommands, 50 external links, 0 redirects.
+  check that found nothing: 104 shell fences, 11 JSON fences, 2 manifests, 6
+  `caf` subcommands, 68 external links, 0 redirects. Measured on this branch by
+  running the suite; this sentence said 103 and 50, which is the failure it
+  exists to prevent, in the file that states it.
 
 ### The contract tier
 
@@ -66,7 +68,13 @@ contradicting something that has actually shipped:
   in core's `event-naming.md`;
 - every span name in `observability.md` obeys core's
   `schemas/telemetry/span-naming.schema.json` — the recommended ones must match
-  its pattern and the "never" examples must not.
+  its pattern and the "never" examples must not;
+- the per-service telemetry table on `observability.md` agrees with core's
+  `fleet.yml`, in both directions, and no page claims one service is the only
+  one exporting telemetry while core records four. That last one is the
+  sentence this site carried on three pages and core carried in a `notes`
+  field; both were true once and neither had anything to stop it going stale
+  again.
 
 It needs a readable `core` (`CORE_PATH`, or a sibling checkout) and a `caf`
 binary (`CAF`, or on `PATH`). It is a flag and a separate file rather than a
@@ -216,7 +224,9 @@ tests/examples.mjs        the examples: every sh fence parses, every json fence 
                           subcommand caf lists
 tests/contracts.mjs       the contract tier, run by `bin/prime --contracts`: manifests
                           through the real `caf contract lint`, event types against
-                          core's catalog, span names against core's span-naming schema
+                          core's catalog, span names against core's span-naming schema,
+                          and observability.md's per-service telemetry table against
+                          core's fleet.yml
 bin/prime                 the gate: npm ci, build, the offline suite. --contracts adds
                           the contract tier, --fast stops after the install
 bin/check-external-links  the network tier: do the external links answer. No retries

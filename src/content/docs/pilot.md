@@ -255,10 +255,11 @@ git clone git@github.com:cafaye/identity.git
 cd identity
 ```
 
-**Why `identity` first.** It is the only service with no dependency on another
-cafaye service, which means the whole stack is one service plus its database
-plus a cache. Every other service adds a second moving part on day one. Get this
-one working, then add the others.
+**Why `identity` first.** It declares no dependency on another cafaye service,
+which means the whole stack is one service plus its database plus a cache.
+`darkroom` is the other one in that position, and `courier` and `billing` declare
+empty lists; `muse` and `guard` reach `identity`. Get this one working, then add
+the others.
 
 **If the clone fails on SSH**, you do not have a key registered on GitHub. Use
 HTTPS for a read-only clone if you have to — `git clone
@@ -654,7 +655,7 @@ because it will get shorter and this page will be updated when it does.
 | **`guard` sessions are per process.** | A browser session dies with the replica it signed in on, and is lost on restart. **Run one replica.** | the `SessionStore` in `guard` |
 | **`muse` does not verify the token it is given.** | Do not put `muse` behind anything you care about. | `muse`'s auth stub |
 | **`caf deploy`, `caf gen`, `caf init`, `caf new`, `caf mcp` are stubs.** | Five of the ten commands `caf help` lists parse their flags and return `not implemented in v0`. You deploy by building each repository's Dockerfile. | `caf/internal/cli/*.go`; the table in [Getting started](/getting-started/) |
-| **No collector, no observability stack.** | The telemetry contract is shipped and enforced; nothing receives it. `muse` is the only service exporting anything, and it exports traces only. | [Observability](/observability/) |
+| **Telemetry is instrumented; no collector is deployed.** `courier`, `billing`, `identity` and `muse` each export traces, and nothing in a cafaye environment receives them. `kit` ships the stack and `bin/dev` runs it, so a pilot gets traces rather than a promise. | You will not have a fleet-wide trace view until you run the stack, and you should budget for wiring `<SERVICE>_OTEL_ENDPOINT` at whatever backend you already pay for. `muse` is not on core's `error.type` vocabulary, so do not group a cross-service error panel on that attribute. | [Observability](/observability/) |
 | **No password reset, no email verification.** | A user who forgets their password has no path back in. **Plan a support channel for this.** | `identity`'s README, "Not built yet" |
 | **`identity` OIDC has no refresh tokens.** | Access tokens live fifteen minutes and cannot be renewed. | the discovery document, where the absent features are absent rather than stubbed |
 | **No vault key rotation.** | `MUSE_VAULT_KEY` cannot be rotated in place. | `key_version` is always 1 |
