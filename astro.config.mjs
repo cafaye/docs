@@ -91,6 +91,12 @@ export default defineConfig({
           items: [
             { slug: 'architecture' },
             { slug: 'architecture/topology' },
+            // Directly under `topology`, because that is the path an operator
+            // takes: the table tells them the service has a database, and the
+            // next question is always "whose database, and how do I know I am
+            // allowed into it". `topology` is a reference table and cannot hold
+            // the answer, which takes a page.
+            { slug: 'architecture/one-cluster' },
             { slug: 'observability' },
           ],
         },
