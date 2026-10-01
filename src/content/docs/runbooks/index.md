@@ -19,7 +19,7 @@ A runbook that does not say what not to do gets read as a menu.
 | [Backup and restore](/runbooks/backup-and-restore/) | You need a database you have actually restored, not a database you have actually backed up. |
 | [Rotating secrets](/runbooks/secret-rotation/) | A signing key, a Stripe secret, a provider credential, or a bucket credential has to change without downtime. |
 | [A service is down](/runbooks/service-down/) | Something is answering 5xx, 503, or nothing at all, and you do not yet know what. |
-| [Billing webhooks failing](/runbooks/billing-webhooks/) | Stripe is delivering and billing is not acting, or billing is answering 4xx/5xx. |
+| [Billing webhooks failing](/runbooks/billing-webhooks/) | Stripe is delivering and billing is not acting, or billing is answering 4xx/5xx. **`billing` is out of launch scope** — the code claims are verified, the network path is yours to define. |
 
 A sixth page sits with these and is the one to read **before** you trust a green
 badge anywhere in the fleet:
@@ -36,6 +36,24 @@ today, so "the environment" means containers you built from each repository's
 Dockerfile on infrastructure you control. [Getting started](/getting-started/)
 has the build and run steps; [Topology](/architecture/topology/) has every port
 and environment variable in one table.
+
+**The deployment mechanism is Kamal, and almost nothing has adopted it.** `kit`
+ships three files — `config/deploy.yml`, `config/kamal-backup.yml` and
+`bin/drill` — and **only `billing` has a `config/deploy.yml` at all**, and it is
+the stock Rails one rather than kit's template. So the `docker` and `kamal`
+commands in these runbooks are addressed to the two situations that actually
+exist: a container you started yourself, and a host you are logged into. Where a
+command only works in one of those, the page says so. [Backup and
+restore](/runbooks/backup-and-restore/) is the runbook that measured this gap
+rather than assuming it.
+
+**Only four of the seven services have a Compose stack you can bring up on its
+own.** `darkroom`, `muse` and `guard` do. `identity`, `courier` and `billing`
+carry a `docker-compose.yml` that is an **override** — the service, its database
+name and its crash layer, and no `image:` on `postgres` because kit's fetched
+stack ships that container — so `docker compose up -d` in those repositories fails
+with *"service \"postgres\" has neither an image nor a build context specified"*.
+**Those three use `bin/dev`**, which every one of them has.
 
 **The services are stateless; the databases are not.** Every image is a
 multi-stage, non-root build with no volume mounted, so a pod restart loses

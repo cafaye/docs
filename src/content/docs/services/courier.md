@@ -83,10 +83,26 @@ the envelope `id` with a unique constraint, in the same transaction as your work
 
 ## Running it
 
+:::caution[`docker compose up` does not work in this repository on its own]
+`courier/docker-compose.yml` is an **override**, not a stack: it carries the
+service, its database name and role, and the crash layer, and deliberately has
+**no `image:` on `postgres`** because kit's fetched stack ships that container.
+Run alone it stops with
+`service "postgres" has neither an image nor a build context specified`.
+
+`courier` ships **`bin/dev`**, which fetches kit's stack at the ref in `kit.ref`
+and merges this file beside it:
+
 ```sh
-docker compose up --build           # postgres:17 + the release image
+bin/dev                             # fetch kit, compose up --wait, migrate, print URLs
 curl -s localhost:4000/healthz      # {"status":"ok"}
 ```
+
+Or run the service on the host against a database you already have —
+`mix phx.server`, with `COURIER_SECRET_BOX_KEY` set. Note also that
+`docker compose` refuses to interpolate without `COURIER_SECRET_BOX_KEY`, so that
+error can be what you see first rather than the missing `postgres` image.
+:::
 
 | Probe | Meaning | 503 body |
 | --- | --- | --- |
@@ -108,13 +124,22 @@ compose stack has no migrate service yet, so run it as a deploy job.
 
 ## The gate
 
-`bin/prime` needs a Postgres at `localhost:5432` as `postgres`/`postgres`:
+`bin/prime` needs a Postgres at `localhost:5432` as `postgres`/`postgres`. **`bin/prime`
+does not start one for you**, and there is no `db` service in this repository's
+compose file to start — the service is called `postgres`, it belongs to kit's
+stack, and it is published on `KIT_POSTGRES_PORT` (default `15500`), not 5432.
+
+So point `bin/prime` at a database rather than expecting one to appear:
 
 ```sh
-docker compose up -d db
-mise run prime        # hex, deps, database, tests
-mix precommit         # warnings-as-errors, unused deps, format, test
+bin/dev                             # bring up kit's stack, including Postgres
+mise run prime                      # hex, deps, database, tests
+mix precommit                       # warnings-as-errors, unused deps, format, test
 ```
+
+or set the test DSN to a Postgres you already run. Read the variable names out of
+`gate.yml` rather than assuming — the failure mode of guessing is a suite that
+passes against the wrong server.
 
 - **Repository:** [github.com/cafaye/courier](https://github.com/cafaye/courier)
 - **Language:** Elixir

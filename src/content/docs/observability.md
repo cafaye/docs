@@ -23,9 +23,23 @@ negative, and on its own it is the least useful sentence on this page. The
 stack is not a design in progress: `kit` ships it as templates — the collector
 config, the Tempo/Loki/Mimir configs, the Grafana provisioning, and two
 dashboards — and `bin/dev` fetches the whole thing from a pinned ref and brings
-it up. A service repository's own `docker-compose.yml` starts Postgres and the
-service and nothing else, so `docker compose up` on its own leaves you with a
-service pointing at a collector that is not there.
+it up.
+
+**And `bin/dev` is the only thing that starts a collector, which is a smaller
+adoption problem than it looks like.** A service repository's own
+`docker-compose.yml` never mounts the collector's config, so bringing one up on
+its own leaves the service exporting to a host that is not there. **`identity`,
+`courier` and `billing` already carry `bin/dev`**; the other four do not, and
+copying it is the whole fix:
+
+```sh
+# KIT is a checkout of cafaye/kit somewhere on this machine
+cp "$KIT/templates/bin/dev.sh" ./bin/dev && chmod +x bin/dev
+```
+
+plus a `kit.ref` pinning a 40-character commit sha — `bin/dev` refuses a branch
+name, loudly, before any network call, because a moving reference is a gate that
+changes under you.
 :::
 
 ## The three states

@@ -22,7 +22,9 @@ things that cannot.
 | Object-storage credential (AWS or R2) | `darkroom` | **yes** | the SDK credential chain; put both keys in the environment, cut over, revoke |
 | `identity` OIDC signing key | `identity` | **partially** | see [below](#5-the-identity-oidc-signing-key--configured-not-rotatable) |
 | `MUSE_VAULT_KEY` | `muse` | **no** | see [below](#3-the-muse-vault-key--cannot-be-rotated) |
-| Email provider credential | `courier` | **n/a yet** | the Swoosh pipeline is built; no provider adapter is configured |
+| `COURIER_SECRET_BOX_KEY` | `courier` | **no** | every sealed webhook secret would need re-sealing; see [below](#7-the-two-sealing-keys-that-cannot-be-rotated) |
+| `MFA_ENCRYPTION_KEY` | `identity` | **no** | same shape, and it fails *closed*; see [below](#7-the-two-sealing-keys-that-cannot-be-rotated) |
+| `COURIER_MAIL_ADAPTER` and its `COURIER_SMTP_*` | `courier` | **yes** | a deployment decision, not a stored secret — see [below](#8-the-courier-email-adapter-is-a-deployment-decision) |
 | Session secret | `guard` | **n/a** | sessions are a `Map` in one process, signed by `identity` |
 
 Two of those rows are new and both were previously written as "there is nothing
@@ -31,6 +33,19 @@ a Checkout Session, cancel a subscription, move one between plans — so there i
 Stripe API key and it is rotatable. And `darkroom` reads its object-storage
 credential from the AWS SDK's own chain, so the rotation is two environment
 variables and a restart.
+
+Three more rows are new, and they are the ones a reader is most likely to
+mis-plan around, because they look like ordinary environment variables and are
+not:
+
+- **`COURIER_SECRET_BOX_KEY` and `MFA_ENCRYPTION_KEY` are sealing keys**, and
+  rotating one is a data-loss event rather than a procedure. `courier`'s own
+  `runtime.exs` says so in one line: *"Rotating it means every stored secret has
+  to be re-sealed under the new key, which is why it is a deployment concern and
+  not a courier feature."* Neither has tooling, so both belong in the same
+  category as `MUSE_VAULT_KEY`. See [section 7](#7-the-two-sealing-keys-that-cannot-be-rotated).
+- **`COURIER_MAIL_ADAPTER` is not a secret at all** — it is a deployment decision
+  with teeth. See [section 8](#8-the-courier-email-adapter-is-a-deployment-decision).
 
 ## The general rule about how these services read configuration
 
@@ -354,10 +369,6 @@ end-session endpoint either.
 
 Do not build a rotation procedure for these; there is nothing to rotate.
 
-- **An email provider credential.** `courier`'s Swoosh pipeline and its
-  notification-preference store are built and it **publishes
-  `courier.email.delivered`**, but no provider adapter is configured — so nothing
-  leaves the process yet. When one is, this is the row that becomes real.
 - **A Stripe API key for a read-only integration.** `billing` now calls Stripe in
   three ways, so it holds a key — but it is a **restricted** key scoped to the
   Checkout, subscription and plan operations it uses, and the rotation is
@@ -365,6 +376,83 @@ Do not build a rotation procedure for these; there is nothing to rotate.
 - **A session secret in `guard`.** Sessions are a `Map` in one process and the
   session id is `identity`'s. Restarting `guard` loses them; there is no key
   material to rotate.
+
+**An email provider credential used to be on this list and is not any more.**
+`courier` **does ship an adapter** — `Swoosh.Adapters.SMTP`, the one adapter it
+supports — and it is selected by `COURIER_MAIL_ADAPTER`. There is no provider
+credential to rotate *until you configure one*, which is a deployment step rather
+than a rotation, and it is section 8. What remains true is narrower and worth
+saying precisely: **`courier` will not start in production without it**, so a
+deployment that has never set it has never run a production courier at all.
+
+---
+
+## 7. The two sealing keys that cannot be rotated
+
+`COURIER_SECRET_BOX_KEY` and `MFA_ENCRYPTION_KEY` are the same shape of problem
+as `MUSE_VAULT_KEY`, and they were missing from this page while being the two
+keys that most damage a **database restore** when they are mishandled. See the
+key table in [backup and restore](/runbooks/backup-and-restore/#the-keys-that-decide-whether-a-dump-is-readable).
+
+**`COURIER_SECRET_BOX_KEY`** is the 32-byte key every **outbound webhook signing
+secret** is sealed under, stored in `webhook_endpoints.secret`. Courier generates
+those per endpoint and seals them; the key is the only way back. Losing it means
+courier cannot sign a single delivery, and there is no rotation path — the
+sealed rows would all have to be re-sealed under a new key, and nothing ships
+that does it. Generate with `openssl rand -base64 32`, store it away from the
+database, and treat it as non-rotatable.
+
+**`MFA_ENCRYPTION_KEY`** seals the TOTP secret in `mfa_credentials.secret_ciphertext`,
+base64url and **exactly 32 bytes**, and it is never generated at boot — a
+generated key would invalidate every enrolled user's second factor on every
+restart. It is unset by default, and unset is a *supported state*: the MFA
+management routes are absent and the login challenge is still enforced. Which
+means **you may not have one in production yet, and finding that out during an
+incident is the wrong time.** The cost of losing it is stated in `identity`'s own
+README and it is worse than a vault: on a lost key every sealed secret is
+unreadable and every enrolled user fails **closed** at their second factor, so
+the only way back is a recovery code or a support ticket.
+
+**There is one piece of good news in `identity`'s design and it is deliberate:**
+the sealed value carries a `mfa1.` format prefix *in the stored value rather
+than in the schema*, precisely so that a future rotation can read what the
+previous key wrote. **The format is versioned; the re-seal procedure is not
+written.** A version prefix is the thing that makes rotation possible later, and
+it is not rotation.
+
+---
+
+## 8. The courier email adapter is a deployment decision
+
+This is the one row in the inventory that is not a stored secret, and it is here
+because it fails in a way that reads like something else entirely.
+
+`courier` ships **one** adapter — `Swoosh.Adapters.SMTP` — and selects it with
+`COURIER_MAIL_ADAPTER`. There is no default, and the absence is load-bearing:
+
+- **Unset, `courier` refuses to start.** `Courier.MailerAdapter.adapter!/1` raises
+  naming the variable and the two lines to set. The stated reason is the good
+  one: *"Without one this process would start, accept every send, and deliver
+  nothing."*
+- **`COURIER_MAIL_ADAPTER=none` is refused in production.** That value is the
+  Local adapter, which renders a message into memory, returns a provider-shaped
+  id, and **opens no socket**. A courier configured with it reports every send
+  as delivered and mails nobody — so it is development-only and the check is a
+  startup gate, not a lint.
+- **Any other value is refused by name**, listing the two supported ones.
+
+```sh
+COURIER_MAIL_ADAPTER=smtp
+COURIER_SMTP_HOST=smtp.your-provider.com
+```
+
+So **rotating the email provider credential is an SMTP credential rotation on
+your provider's side** — SES, Postmark, Mailgun, SendGrid and Resend all speak
+SMTP or have an SMTP front — plus a roll of `courier`. There is no cafaye-side
+overlap window and no double-send risk: the credential is read at startup and
+never cached. A second gate worth knowing is that courier checks the **resolved**
+adapter, not the variable, so a config that *looks* like SMTP but resolves to a
+silent adapter is refused before any child starts.
 
 ## What not to do
 
@@ -376,6 +464,15 @@ Do not build a rotation procedure for these; there is nothing to rotate.
 - **Do not attempt to rotate `MUSE_VAULT_KEY`.** There is no tooling, and it
   makes every stored credential undecryptable. Rotate the *provider* key inside
   the vault instead.
+- **Do not attempt to rotate `COURIER_SECRET_BOX_KEY` or `MFA_ENCRYPTION_KEY`
+  either**, and do not assume they are easier than the vault key because their
+  columns look like ordinary data. Both are sealing keys with no re-seal
+  tooling; `MFA_ENCRYPTION_KEY` additionally fails **closed**, so a bad rotation
+  locks users out of their own second factor rather than degrading.
+- **Do not set `COURIER_MAIL_ADAPTER=none` in production to get past a missing
+  variable.** It is refused at startup for exactly that reason, and forcing it
+  through config gives you a courier that reports every send as delivered and
+  mails nobody.
 - **Do not `DROP ROLE` before every service is on the new one.** The drop fails
   while grants depend on it, and you will be doing the `REASSIGN OWNED` dance
   with old credentials already revoked.
@@ -398,7 +495,10 @@ schedules is a rotation that does not happen:
 | LLM provider credentials | 90 days, or on provider notice | provider-side rotation, staff change |
 | Database passwords | 90 days | any suspected disclosure |
 | Object-storage credential | 90 days | any suspected disclosure |
+| `courier` SMTP credential | 90 days, or on provider notice | staff change; **not** a cafaye-side key |
 | `MUSE_VAULT_KEY` | **never** | not rotatable; replace the provider keys instead |
+| `COURIER_SECRET_BOX_KEY` | **never** | not rotatable; re-sealing tooling does not exist |
+| `MFA_ENCRYPTION_KEY` | **never** | not rotatable, and a lost key fails users **closed** |
 
 ## See also
 

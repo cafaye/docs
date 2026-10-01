@@ -366,14 +366,49 @@ a dependency the registry does not know how to run is reported as `skipped`
 rather than silently omitted. It does not deploy, and it does not start a broker —
 nothing in the platform publishes events off the outbox.
 
-**Each service repository also ships its own Compose stack**, and that remains the
-supported path for a single service. `identity` is the shortest example, and the
-shape is the same for the others:
+:::caution[Not every service has a Compose stack you can bring up on its own]
+`darkroom`, `muse` and `guard` ship a complete `docker-compose.yml`, and
+`docker compose up -d` works in each of them (`muse` needs `MUSE_VAULT_KEY` set,
+or compose refuses to interpolate it).
+
+**`identity`, `courier` and `billing` do not.** Their `docker-compose.yml` is an
+**override**, not a stack: the service, its database name and role, and the
+crash layer — and deliberately **no `image:` on `postgres`**, because kit's
+fetched stack ships that container. Run alone, it stops before starting anything:
+
+```
+service "postgres" has neither an image nor a build context specified: invalid compose project
+```
+
+(`courier` fails one step earlier still, on a missing
+`COURIER_SECRET_BOX_KEY`.) **Those three use `bin/dev`**, which every one of them
+carries: it fetches kit's stack at the ref in `kit.ref` and merges your file
+beside it.
+:::
+
+With one that starts on its own, the shape is:
+
+```sh
+git clone git@github.com:cafaye/darkroom.git
+cd darkroom
+docker compose up -d postgres
+curl -s localhost:8080/healthz
+curl -s localhost:8080/readyz
+```
+
+```
+{"status":"ok"}
+{"status":"ok"}
+```
+
+For `identity` — the shortest example of the `bin/dev` shape — the database is
+in kit's stack rather than the service's, and its readiness answer carries the
+dependency by name:
 
 ```sh
 git clone git@github.com:cafaye/identity.git
 cd identity
-docker compose up -d
+bin/dev              # fetch kit at kit.ref, merge, up --wait, migrate, print URLs
 curl -s localhost:8080/healthz
 curl -s localhost:8080/readyz
 ```
@@ -389,7 +424,8 @@ healthy dependency check. The `/v1` routes are only registered when
 `DATABASE_URL` is set, so a missing database is a clean `404` rather than a
 pile of `500`s.
 
-To run it without Docker at all — the faster loop while you are changing code:
+To run `identity` without Docker at all — the faster loop while you are changing
+code, and it needs no database:
 
 ```sh
 mise install          # reads identity/mise.toml -> the pinned Go
@@ -400,24 +436,39 @@ go run ./cmd/identity # http://localhost:8080
 
 | Service | Local stack | Port | What answers |
 | --- | --- | --- | --- |
-| `identity` | `docker compose up -d` | 8080 | `{"status":"ok","deps":"postgres"}` |
-| `billing` | `docker compose up -d` (database only), then `bin/rails server` | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
-| `courier` | `docker compose up --build` | 4000 | `{"status":"ok"}` |
-| `darkroom` | `docker compose up -d` | 8080 | `{"status":"ok"}` |
-| `muse` | `docker compose up --build` | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
+| `identity` | **`bin/dev`** (compose alone will not start) | 8080 | `{"status":"ok","deps":"postgres"}` |
+| `billing` | **`bin/dev`**, then `bin/rails server` | 3000 | `{"status":"ok","checks":{"database":"ok"}}` |
+| `courier` | **`bin/dev`**, or `mix phx.server` | 4000 | `{"status":"ok"}` |
+| `darkroom` | `docker compose up -d postgres`, then `cargo run` | 8080 | `{"status":"ok"}` |
+| `muse` | `docker compose up --build` (needs `MUSE_VAULT_KEY`) | 8000 | `{"status":"ok","deps":{"db":"ok"}}` |
 | `guard` | `docker compose up -d --build` | 8080 | `{"deps":{…}}` |
 | `parlor` | `bun run dev` | 3000 | `{"status":"ok","deps":"none"}` |
 
-`billing` is the odd one: its Compose file starts **only Postgres**, and the
-application runs on the host. The commands are in that repository's README and
-are not repeated here, because they will be right there when you need them.
+The three in bold are the ones whose `docker-compose.yml` is an override rather
+than a stack. `parlor` has no compose file at all — it is a Next.js frontend and
+`bun run dev` is the whole loop.
 
 **Three port collisions to expect on a laptop:** `identity`, `guard` and
-`darkroom` all want 8080, and `identity`, `billing`, `courier` and `darkroom` all
-want 5432 for Postgres (`muse` uses 5433). Compose takes the host port from a
-variable where the repository offers one
-(`POSTGRES_PORT=5433 docker compose up -d`); where it does not, run one service
-at a time.
+`darkroom` all want 8080, so run them one at a time.
+
+**The Postgres host port is narrower than it used to be described.** Only
+**`darkroom` (5432)** and **`muse` (5433)** publish a Postgres port on the host,
+both as literals. `identity`, `courier` and `billing` publish **none** — their
+databases are reachable over the compose network by service name, and kit's
+fetched stack publishes its own on `KIT_POSTGRES_PORT` (default `15500`).
+
+**There is no `POSTGRES_PORT` variable to set.** No service repository reads one;
+the only `POSTGRES_PORT` in the fleet is inside `identity`'s `gate.yml` prose and
+`parlor`'s e2e stack's own `E2E_IDENTITY_POSTGRES_PORT`. A previous version of
+this page told you to remap with `POSTGRES_PORT=5433 docker compose up -d` — that
+does nothing. The variable that exists is **`KIT_POSTGRES_PORT`**, it lives in
+**kit's `.env`**, and it moves kit's shared container rather than any service's.
+
+The trap worth knowing is `darkroom`'s: its Postgres binds host 5432, so a native
+Postgres already listening there means the container comes up **healthy** — the
+healthcheck is `pg_isready`, which reports a server accepting connections and
+does not authenticate — while your command reaches the *other* database and fails
+with `role "darkroom" does not exist`, which reads like a missing migration.
 
 `darkroom`'s compose stack defaults to `DARKROOM_OBJECT_STORE=memory`, which is
 what makes the local path work with no bucket and no credentials. Its
@@ -478,6 +529,33 @@ to yet, so there is also no remote to authenticate against.
 the repository's own Dockerfile and run it.** Every service ships a
 multi-stage, non-root Dockerfile, and they are not interchangeable — each pins
 its own base image and runtime.
+
+:::caution[`kit` ships a Kamal configuration; no repository has adopted it]
+`kit/templates/kamal/` holds the three files a Kamal deployment is made of —
+`deploy.yml.erb` (→ `config/deploy.yml`), `kamal-backup.yml.erb` (→
+`config/kamal-backup.yml`) and `drill.sh` (→ `bin/drill`). **Only `billing` has
+a `config/deploy.yml` at all**, and it is the stock Rails-generated file rather
+than kit's template — its `accessories:` block is commented out.
+
+So `docker build` + `docker run` below is the real path today, and the Kamal
+files are the shape to adopt when you want backups. Two things to know before
+you do, because both are counter-intuitive:
+
+- **`kamal` is a Ruby gem, so your machine needs Ruby.** Not the service image —
+  a service image never needs Ruby, whatever its language — and not the server.
+  The `backup` accessory ships its own Ruby inside the container. Only the
+  operator's machine carries the requirement, and it comes from Kamal rather than
+  from cafaye.
+- **`kit`'s deploy tooling is not remote.** `templates/bin/deploy.sh` runs a
+  production-*shaped* deployment — health gates, rollback, credential injection —
+  against a **local Docker daemon**. Pointed at your own machine it is a local
+  production-shaped run, and it does not become a remote deploy by being called
+  from a laptop.
+
+[Backup and restore](/runbooks/backup-and-restore/) is where this gap was
+measured, and it is the runbook that tells you which of the seven services have
+adopted what.
+:::
 
 ```sh
 git clone git@github.com:cafaye/identity.git
@@ -554,10 +632,15 @@ sentences.** `core` ships seven telemetry schemas and enforces the contract;
 `courier`, `billing`, `identity` and `muse` each wire an OTel SDK and export
 traces to whatever `<SERVICE>_OTEL_ENDPOINT` names, defaulting to the collector
 that ships with the stack. **No collector is deployed anywhere in a cafaye
-environment**, so a service started from its own `docker-compose.yml` — which
-brings up Postgres and the service and nothing else — is exporting to a host
-that is not there. Copy `kit`'s `bin/dev` into the service repository and it
-fetches the whole stack, brings it up, and prints the URLs.
+environment**, so a service started from its own `docker-compose.yml` is
+exporting to a host that is not there.
+
+Getting a collector takes `bin/dev`, which **three of the seven repositories
+already carry** (`identity`, `courier`, `billing`) — it fetches kit's whole stack
+at the ref in `kit.ref`, brings it up, and prints the URLs. The other four have
+no `bin/dev`, and copying it is the fix: `cp <kit>/templates/bin/dev.sh ./bin/dev`
+(plus a `kit.ref` pinning a 40-character commit sha, because `bin/dev` refuses a
+branch name before it makes any network call).
 [Observability](/observability/) has the per-service table and the three states,
 and says what the gap costs you.
 
