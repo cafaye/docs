@@ -23,9 +23,16 @@ negative, and on its own it is the least useful sentence on this page. The
 stack is not a design in progress: `kit` ships it as templates — the collector
 config, the Tempo/Loki/Mimir configs, the Grafana provisioning, and two
 dashboards — and `bin/dev` fetches the whole thing from a pinned ref and brings
-it up. A service repository's own `docker-compose.yml` starts Postgres and the
-service and nothing else, so `docker compose up` on its own leaves you with a
-service pointing at a collector that is not there.
+it up.
+
+**A service repository's own `docker-compose.yml` does not start any of it**, and
+for `identity`, `courier` and `billing` it does not even start on its own — those
+three are *overrides* on `kit`'s stack, so plain `docker compose up` fails
+outright and `bin/dev` is the command that composes them. Either way the
+collector is absent, so a service brought up without `kit`'s stack is exporting
+to a host that is not there. Every service defaults its
+`<SERVICE>_OTEL_ENDPOINT` to `http://localhost:4318`, and in a compose network
+`localhost` is the service itself.
 :::
 
 ## The three states

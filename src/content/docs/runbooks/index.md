@@ -33,9 +33,21 @@ badge anywhere in the fleet:
 
 **You are running the services yourself.** There is no hosted cafaye platform
 today, so "the environment" means containers you built from each repository's
-Dockerfile on infrastructure you control. [Getting started](/getting-started/)
-has the build and run steps; [Topology](/architecture/topology/) has every port
-and environment variable in one table.
+Dockerfile on infrastructure you control.
+
+**The deployment mechanism is `kamal`, and `kit` ships its configuration.** Two
+configuration files — `config/deploy.yml` and `config/kamal-backup.yml` — and one
+wrapper, `bin/drill`, copied out of `kit`'s `templates/kamal/`. **No service in
+the fleet has adopted them yet**, so a runbook that says "roll the service" means
+whatever your own deployment does; [Getting started](/getting-started/) has the
+per-service build and run steps, and [backup and
+restore](/runbooks/backup-and-restore/) is written against the mechanism in full.
+
+**Migrations are a deploy step, not a boot step.** No service migrates on boot.
+Run them as a job before the new image rolls out, and fail the deploy on a
+non-zero exit. A half-applied migration is worse than one that did not run.
+`bin/dev up` runs your repository's migration command for you locally; nothing
+does it in production.
 
 **The services are stateless; the databases are not.** Every image is a
 multi-stage, non-root build with no volume mounted, so a pod restart loses
@@ -45,10 +57,6 @@ the only thing in this platform that a backup runbook has to care about.
 presigned writes into a bucket you choose (S3 or Cloudflare R2), and the bucket is
 **not** covered by the database dump. A restored database whose objects are gone
 has assets pointing at nothing.
-
-**Migrations are a deploy step, not a boot step.** No service migrates on boot.
-Run them as a job before the new image rolls out, and fail the deploy on a
-non-zero exit. A half-applied migration is worse than one that did not run.
 
 **A green badge is only worth what it ran.** `kit`'s reusable workflow is callable
 and eight repositories now call it, but in most of the fleet the interesting

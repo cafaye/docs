@@ -164,13 +164,17 @@ not exist` rather than skipping.
 ```sh
 bin/prime && go vet ./... && gofmt -l . && go test -race ./...
 
-docker compose up -d postgres
-export DATABASE_URL="postgres://identity:identity@localhost:5432/identity?sslmode=disable"
-goose -dir migrations postgres "$DATABASE_URL" up
+bin/dev up
+export DATABASE_URL="postgres://identity:identity@localhost:15500/identity?sslmode=disable"
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
 
-`gofmt -l .` must print nothing. See [Running the
+`gofmt -l .` must print nothing. **The port is 15500, not 5432**: `identity`'s
+compose file is an override on `kit`'s stack, publishes no Postgres port of its
+own, and `kit`'s stack publishes one on 15500. Read it with `bin/dev stack`
+rather than guessing, and note that `bin/dev up` does not currently finish for
+this repository — see [Getting
+started](/getting-started/#step-5--run-a-service-locally). See also [Running the
 gates](/running-the-gates/#identity--needs-a-database-and-migrations-applied).
 
 - **Repository:** [github.com/cafaye/identity](https://github.com/cafaye/identity)

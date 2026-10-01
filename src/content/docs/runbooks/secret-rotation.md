@@ -20,17 +20,21 @@ things that cannot.
 | LLM **provider** credential (OpenAI, Anthropic) | `muse` vault | **yes, with no downtime** | re-seal the row |
 | Database password (`DATABASE_URL`) | every service with a database | **yes, via a second role** | `CREATE ROLE` → cut over → `DROP ROLE` |
 | Object-storage credential (AWS or R2) | `darkroom` | **yes** | the SDK credential chain; put both keys in the environment, cut over, revoke |
+| Email provider credential | `courier` | **yes** | `COURIER_MAIL_ADAPTER=smtp` plus `COURIER_SMTP_*`; **required, no default** |
+| Scoped API token | `identity` | **yes, by issuing a second one** | `POST /v1/accounts/{id}/api-keys` → cut over → `DELETE …/{key_id}` |
 | `identity` OIDC signing key | `identity` | **partially** | see [below](#5-the-identity-oidc-signing-key--configured-not-rotatable) |
 | `MUSE_VAULT_KEY` | `muse` | **no** | see [below](#3-the-muse-vault-key--cannot-be-rotated) |
-| Email provider credential | `courier` | **n/a yet** | the Swoosh pipeline is built; no provider adapter is configured |
 | Session secret | `guard` | **n/a** | sessions are a `Map` in one process, signed by `identity` |
 
-Two of those rows are new and both were previously written as "there is nothing
-to rotate here". `billing` now makes **three kinds of request to Stripe** — create
-a Checkout Session, cancel a subscription, move one between plans — so there is a
-Stripe API key and it is rotatable. And `darkroom` reads its object-storage
-credential from the AWS SDK's own chain, so the rotation is two environment
-variables and a restart.
+Three of those rows are new and all three were previously written as "there is
+nothing to rotate here". `billing` now makes **three kinds of request to
+Stripe** — create a Checkout Session, cancel a subscription, move one between
+plans — so there is a Stripe API key and it is rotatable. `darkroom` reads its
+object-storage credential from the AWS SDK's own chain, so the rotation is two
+environment variables and a restart. And `courier` now has a **real** mail
+adapter rather than one that rendered into memory and mailed nobody, so its SMTP
+credential is an ordinary rotatable secret — see [section
+6](#6-an-email-provider-credential-in-courier--required-not-optional).
 
 ## The general rule about how these services read configuration
 
@@ -350,14 +354,120 @@ end-session endpoint either.
 
 ---
 
-## 6. Secrets that do not exist yet
+## 6. An email provider credential in courier — required, not optional
+
+This row changed from "there is nothing to rotate here" to "there is a real
+credential here", and the reason it is worth reading is the failure it replaced.
+
+**What used to happen.** `courier` shipped `Swoosh.Adapters.Local` as its
+production adapter. `Local` renders a message into memory and returns a
+provider-shaped id **without opening a socket**. So a released courier accepted
+every send, wrote an `outbox_events` row for it, published
+`courier.email.delivered`, and mailed nobody — with no error, no warning, and a
+green dashboard. Everything downstream of those events believed a person had
+been told something.
+
+**What happens now.** The adapter is required config with no default, and a
+courier that cannot deliver **refuses to boot**:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `COURIER_MAIL_ADAPTER` | **none — required** | `smtp` is the only adapter that reaches a provider |
+| `COURIER_SMTP_HOST` | — | required when the adapter is `smtp` |
+| `COURIER_SMTP_PORT` | `587` | the submission port |
+| `COURIER_SMTP_USERNAME` | — | required unless `COURIER_SMTP_AUTH=never` |
+| `COURIER_SMTP_PASSWORD` | — | required unless `COURIER_SMTP_AUTH=never` |
+| `COURIER_SMTP_AUTH` | `always` | `always` · `never` · `if_available` |
+| `COURIER_SMTP_TLS` | `always` | `always` · `never` · `if_available` |
+| `COURIER_SMTP_SSL` | `false` | `true` for implicit TLS on 465 |
+
+`Local` and `Test` are both **refused by name** in production. The refusal is at
+boot rather than at send time because the failure is asymmetric: a warning is one
+line in a log nobody reads, and by the time somebody reads it the damage is
+already recorded as delivered.
+
+**So the rotation is ordinary**, and it is the two-role shape with the relay
+instead of Postgres: get the new credential accepted at the provider, deploy it
+in `COURIER_SMTP_PASSWORD` with a roll, confirm, then revoke the old one at the
+provider. **A changed environment variable requires a restart** (see the general
+rule above), and an SMTP server that will not authenticate the new password
+fails the boot — so a bad rotation is a deploy that does not happen, not an
+outage.
+
+**A credential is never in a log line.** `courier` prints one startup line
+naming the adapter, the host, the port and whether auth is on — *never* the
+username and *never* the password, because at SMTP a "username" is very often
+the API key. The line is prefixed by `mailer:` and its body is exactly these
+four fields, in this order and this spelling:
+
+```
+mailer: adapter=smtp host=relay.example port=587 auth=always
+```
+
+An unconfigured deployment does not print that line at all — it raises during
+`config/runtime.exs`, which runs before the application starts.
+
+---
+
+## 7. A scoped API token in identity — issue a second one, then revoke the first
+
+This is the rotation that needs no downtime window at all, because it is not a
+replacement of a single value: it is an **issuance**. `identity`'s `api_keys`
+table is the credential that is not a browser session, and it was missing from
+this inventory entirely.
+
+What the table holds, and the four facts that matter for rotation:
+
+- **The token is returned exactly once.** `POST /v1/accounts/{account_id}/api-keys`
+  returns it in the `201`; what is stored is the lower-case hex **SHA-256
+  digest**, never the value. There is no endpoint that re-reads the token, so
+  **the `201` is the only place it exists** — losing it means issuing another.
+- **`name` is required.** An operator revokes by what they can read, and a token
+  with no name is one you can only revoke by copying a uuid out of a list.
+- **`expires_at` is required and capped at 365 days** by a `CHECK` constraint in
+  the database, not only in Go — a token cannot be created with a longer
+  lifetime by a caller that skipped the service layer.
+- **`last_used_at` is written on the read path**, and nullable on purpose: "never
+  used" and "used at the epoch" are different answers, and a token nobody has
+  ever presented is exactly the one an operator wants to notice.
+
+**Rotate it like this.** Both keys are valid at once, so there is no cutover:
+
+1. `POST /v1/accounts/{account_id}/api-keys` with the scopes the new key needs
+   and a `name` that says which one it is. Keep the token from the response.
+2. Move the consumer onto it — a CI variable, a settings page, an SDK credential.
+3. `GET /v1/accounts/{account_id}/api-keys` and confirm `last_used_at` on the
+   **old** key stops advancing. That is the check, and it is the only one that
+   proves the consumer moved. The field is `omitempty`, so a key that has never
+   been presented simply has no `last_used_at` — which is a different answer
+   from one carrying a timestamp, and worth distinguishing.
+4. `DELETE /v1/accounts/{account_id}/api-keys/{key_id}` with an optional
+   `{"reason": "…"}`. It answers **204** and nothing else.
+
+**All three routes are owner-only.** Minting, listing and revoking a scoped API
+token each require the `owner` role, checked before the handler runs — so this
+is a procedure for somebody who holds the account, not for a service account
+that can read an account but not administer its credentials.
+
+**Do not rotate this by deleting first.** A deleted key is dead
+immediately — there is no overlap, because the thing you are rotating is the
+thing that decides whether the request is allowed.
+
+:::caution[`identity.api_key.revoked` is also the expiry event, and nothing emits that half]
+The event `identity.api_key.revoked` covers **both** revocation and expiry. There
+is **no sweeper**, so the expiry half is not emitted: nothing writes
+`identity.api_key.revoked` when a token simply runs out. A consumer that treats
+this type as "all of this account's credentials are gone" will be right about
+explicit revocations and silent about expiries. Give tokens an expiry well inside
+the window you care about, and revoke explicitly rather than waiting.
+:::
+
+---
+
+## 8. Secrets that do not exist yet
 
 Do not build a rotation procedure for these; there is nothing to rotate.
 
-- **An email provider credential.** `courier`'s Swoosh pipeline and its
-  notification-preference store are built and it **publishes
-  `courier.email.delivered`**, but no provider adapter is configured — so nothing
-  leaves the process yet. When one is, this is the row that becomes real.
 - **A Stripe API key for a read-only integration.** `billing` now calls Stripe in
   three ways, so it holds a key — but it is a **restricted** key scoped to the
   Checkout, subscription and plan operations it uses, and the rotation is
@@ -365,6 +475,13 @@ Do not build a rotation procedure for these; there is nothing to rotate.
 - **A session secret in `guard`.** Sessions are a `Map` in one process and the
   session id is `identity`'s. Restarting `guard` loses them; there is no key
   material to rotate.
+- **A per-message DKIM or provider API key in `courier`.** The adapter speaks
+  SMTP and nothing else; there is no HTTP-provider adapter to configure, so a
+  provider's REST API key is not a `courier` secret today.
+- **A `COURIER_INBOUND_RESEND_SECRET`-shaped inbound credential.** It exists and
+  is required, but it authenticates *your* error-reporting relay into `courier`,
+  not a cafaye-facing credential, so rotating it is an ops detail rather than a
+  customer-facing one.
 
 ## What not to do
 
@@ -385,6 +502,16 @@ Do not build a rotation procedure for these; there is nothing to rotate.
 - **Do not commit a generated key anywhere.** `muse.vault` prints to stdout and
   nothing else; that output is the only copy, and it goes straight into a secret
   manager.
+- **Do not let `courier` boot without a mail adapter, and do not settle for a
+  warning.** The refusal at boot is the control. A deployment that starts and
+  accepts mail it cannot send is the failure that produced a green dashboard
+  over undelivered password resets.
+- **Do not rotate a scoped API token by deleting it first.** Two keys are valid
+  at once; that is what makes this rotation the cheapest on the page. Deleting
+  first removes the overlap and with it the reason there is no downtime.
+- **Do not treat a missing `last_used_at` as "still in use".** The field is
+  omitted for a key nobody has ever presented, which is the case you most want
+  to notice and the one a dashboard counting non-null values will drop.
 
 ## A rotation schedule worth having
 
@@ -398,6 +525,8 @@ schedules is a rotation that does not happen:
 | LLM provider credentials | 90 days, or on provider notice | provider-side rotation, staff change |
 | Database passwords | 90 days | any suspected disclosure |
 | Object-storage credential | 90 days | any suspected disclosure |
+| `COURIER_SMTP_PASSWORD` | 90 days, or on provider notice | provider-side rotation, staff change |
+| Scoped API tokens (`identity`) | on the `expires_at` you issued, or on staff change | departure, a leaked CI variable, a decommissioned integration |
 | `MUSE_VAULT_KEY` | **never** | not rotatable; replace the provider keys instead |
 
 ## See also

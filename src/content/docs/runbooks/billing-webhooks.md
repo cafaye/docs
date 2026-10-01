@@ -111,12 +111,17 @@ failure is how a healthy service generates work:
 Not `billing`'s problem. Check, in order:
 
 1. **The endpoint URL** in the Stripe dashboard resolves and terminates TLS.
-   The services bind plain HTTP; TLS is the edge's job.
+   The services bind plain HTTP; TLS is the edge's job — and in a Kamal
+   deployment `proxy.ssl: true` in `config/deploy.yml` is what terminates it.
 2. **The endpoint is enabled** in Stripe, and pointed at the environment you
    think it is. Staging and production endpoints are separate objects.
 3. **`STRIPE_WEBHOOK_SECRET` matches.** See case 2.
-4. **Firewall / security group.** `billing`'s port is 3000 in development and 80
-   in the image; the compose stack publishes neither by default.
+4. **Firewall / security group, and the port the image is actually on.** `billing`
+   listens on **3000** under the local stack and **80** in the container image —
+   its `Dockerfile` declares `EXPOSE 80`, and the local compose file overrides
+   the environment with `PORT: "3000"` and publishes `3000:3000`. So which port
+   your firewall needs depends on how you are running it, and the answer is not
+   the same in both.
 
 ## Case 2 — Stripe is delivering and `billing` is refusing (400)
 

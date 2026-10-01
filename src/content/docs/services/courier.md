@@ -84,9 +84,17 @@ the envelope `id` with a unique constraint, in the same transaction as your work
 ## Running it
 
 ```sh
-docker compose up --build           # postgres:17 + the release image
-curl -s localhost:4000/healthz      # {"status":"ok"}
+bin/dev up                       # kit's stack, then the release image on :4000
+curl -s localhost:4000/healthz    # {"status":"ok"}
 ```
+
+`courier`'s compose file is an **override** on `kit`'s stack rather than a whole
+stack, so plain `docker compose up` fails with *"service \\"postgres\\" has
+neither an image nor a build context specified"* and `bin/dev` is the command
+that composes them. It also needs `COURIER_SECRET_BOX_KEY` and its inbox resend
+secret before compose will render at all. And `bin/dev up` does not currently
+finish for this repository, for the reason in [Getting
+started](/getting-started/#step-5--run-a-service-locally).
 
 | Probe | Meaning | 503 body |
 | --- | --- | --- |
@@ -108,10 +116,12 @@ compose stack has no migrate service yet, so run it as a deploy job.
 
 ## The gate
 
-`bin/prime` needs a Postgres at `localhost:5432` as `postgres`/`postgres`:
+`bin/prime` needs a Postgres it can reach — bring the stack up with `bin/dev up`
+and read the DSN out of `bin/dev stack` rather than assuming a port. There is no
+`docker compose up -d db` any more: this repository has no `db` service of its
+own.
 
 ```sh
-docker compose up -d db
 mise run prime        # hex, deps, database, tests
 mix precommit         # warnings-as-errors, unused deps, format, test
 ```

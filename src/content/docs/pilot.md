@@ -568,7 +568,7 @@ rewrites its rendered file on every run:
 ```sh
 cd identity
 export MFA_ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '=\n' | tr '+/' '-_')
-docker compose up -d
+bin/dev up
 ```
 
 :::caution[That command is a shape, not a verified recipe]
@@ -577,6 +577,13 @@ base64url string the service reads — checked, it decodes back to exactly 32
 bytes, and `identity` refuses to start if it does not. The `tr -d '=\n'` matters:
 base64 padding and the trailing newline are both length, and a value one
 character too long fails at boot rather than at enrollment.
+
+**It is `bin/dev` and not `docker compose up -d`,** because `identity`'s Compose
+file is an override on `kit`'s stack rather than a whole stack: run alone, it
+fails with *"service \\"postgres\\" has neither an image nor a build context
+specified"*. That was the command printed here before, and it does not start
+anything. See [Getting started](/getting-started/#step-5--run-a-service-locally).
+
 The enrollment-and-confirm walkthrough is in that repository's README and was
 **not** re-run for this page — see [what this page does not
 verify](#what-this-page-does-not-verify).
