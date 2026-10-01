@@ -8,7 +8,134 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- **One cluster, many databases** (`architecture/one-cluster`), the page an
+  operator needs when a service cannot reach its database. The fleet runs **one**
+  Postgres with a database and a role per service, and the site described
+  something else. Every command and every block of output on the page was **run**
+  against a cluster built by `kit`'s own
+  `templates/compose/postgres/initdb/10-cluster.sh`, brought up through
+  `kit/templates/compose/docker-compose.yml`.
+
+  The page answers four questions the rest of the site could not:
+
+  - **What stops `courier` reading `billing`'s rows** — `REVOKE ALL ON DATABASE
+    … FROM PUBLIC`, with the measured counterfactual that one `GRANT CONNECT`
+    undoes it. `identity` reaching into `billing` is refused with
+    `FATAL:  permission denied for database "billing"` /
+    `DETAIL:  User does not have CONNECT privilege.`, exit 2, and the refusal
+    happens before a query is parsed. `kit`'s own `tests/isolation_test.sh` was
+    run and passes, including its negative control: a cluster of the same shape
+    built **without** the `REVOKE` lets the role in, which is what makes the
+    refusal mean anything.
+  - **How to tell whether isolation is actually in place**, because the failure
+    mode is silence — a cluster with no boundary answers every query a service
+    sends, so the only evidence is the absence of an error. The page gives the
+    one-query sweep over `pg_database`, and shows what an open database looks
+    like: a `CREATE DATABASE` with nothing else, `courier` walking into it, and
+    the whole cluster enumerable from inside. The sweep answers `none` on a
+    healthy cluster and **names** the offending database on a broken one.
+  - **What the connection budget is** — `max_connections` 200, a per-role
+    `ALTER ROLE … CONNECTION LIMIT` of 10, measured — and what happens at the
+    limit. The server says `FATAL:  too many connections for role "courier"`
+    immediately; a driver with a pool **queues** instead, so the service's own
+    symptom is a timeout and the error is in the Postgres log and nowhere else.
+  - **How to add a service**, which is `bin/dev db grant <name>` — it exists, it
+    prints the statements rather than running them, and its output was captured
+    and the statements run against a live cluster.
+
+  It also states what is **not** proven: that a database created after the volume
+  was provisioned gets Postgres's default and is open to every role, that
+  `docker-entrypoint-initdb.d` cannot re-apply itself, that extensions are a
+  cluster decision (`CREATE EXTENSION vector` as a service role is refused with
+  `HINT:  Must be superuser to create this extension`), and that there is **no**
+  `bin/dev` subcommand that proves isolation on a running cluster.
+
+- **A troubleshooting entry for a service that cannot connect to its database**,
+  in the house style: what to check, what it usually means, what to do. The three
+  reasons that are now possible are separated by the error text rather than
+  guessed at — the role has no `CONNECT` (and that is the boundary *working*, so
+  do not go looking for a grant to add), the database was created by hand and is
+  open to the whole cluster, and the connection budget is exhausted and looks
+  like a timeout. A fourth thing that is not a connection failure at all — an
+  unapplied migration — is named, because `relation "users" does not exist` on a
+  connection that works is a different problem with a different fix.
+
 ### Fixed
+
+- **The merge of `master` into this branch concatenated the two append-only
+  logs instead of choosing between them, and found one clause in `docs-24`'s
+  entry that measurement overrules.** `master` carried `docs-24` — a rewritten
+  `architecture/topology.md` and two new pages — and this branch carried
+  `docs-23`, `docs-25` and the recovery of a killed worker. Three files
+  conflicted (`AGENTS.md`, `CHANGELOG.md`, `architecture/topology.md`) and
+  **`runbooks/backup-and-restore.md` auto-merged**, which is where the merge's
+  real risk was.
+
+  - **The append-only rule was applied rather than assumed.** `CHANGELOG.md`
+    records what each session found, and both sides had entries about the same
+    defect class in different shapes. The 116-line deletion in `9ced5b8` — a
+    *shape* difference resolved by deleting a side's words — is why this merge
+    concatenates. Every top-level entry from both sides survives, in its own
+    session's words and in its original order, newest first: `docs-26` (this
+    entry), `docs-25`, `docs-24`'s two, `docs-23b`, `docs-23`. Counted rather
+    than asserted: `[Unreleased]` carried **20** `### Fixed` and **17** `### Added`
+    entries on `master` and **29** and **17** on this branch, and carries **32**
+    and **19** here — 29 + 2 + this one, and 17 + 2.
+
+  - **`docs-24`'s "`Every service is on Postgres 17` … all still true and are
+    still here" is not, and the page no longer says it.** The measurement stands
+    over the sentence: a first run gets `postgres:16.6-alpine`, not 17, because
+    the `.env` `bin/dev` writes comes from `kit/.env.example` and overrides kit's
+    `17-alpine` compose default; `caf dev` renders `postgres:16-alpine`. That is
+    three values, and `topology.md` now states the standard and the three values
+    separately. `docs-25`'s correction of the Database column also survives, and
+    it is why that column reads *via `kit`'s container* for three rows: those
+    services pin no tag of their own, so "Postgres 17" was never true of them.
+
+  - **One clause `docs-24` added to that column was false, and is narrowed with
+    the measurement attached rather than substituted.** It read "every database
+    has the same name as the service that owns it". `darkroom`'s own
+    `docker-compose.yml` sets **`POSTGRES_DB: darkroom_test`** with role
+    `darkroom` and points `DATABASE_URL` at `…/darkroom_test`; its CI workflow
+    uses the same name — and so does a `sh` fence this site has carried in
+    `running-the-gates` all along, so the clause contradicted the repository's
+    own example. For that one service the database and the role are spelled
+    differently. The page now says so and names `darkroom` as the exception.
+    `docs-24`'s entry above is left standing, unreworded.
+
+  - **The auto-merged runbook needed no repair, and that was checked rather than
+    assumed.** `runbooks/backup-and-restore.md` is in neither side's conflict
+    set, and `master` still carries the status line `docs-25` corrected — it
+    branched before that fix, so its version of the block is the older one.
+    Git's auto-merge kept the corrected block **and** kept `docs-24`'s two
+    unique additions: the "a database is not the same as a server" paragraph and
+    the `CONNECT`-grant consequence under item 3. Both were read in the merged
+    file rather than assumed from the fact that git reported no conflict.
+
+  - **`AGENTS.md`'s one conflicted line is a measurement, so it was re-measured
+    rather than picked.** It is the shell-fence count — a fact about this tree,
+    not a historical record — and `master` said 129 where this branch said 115.
+    **Neither number was right for the merged tree:** the suite reports **136**
+    `sh` fences, because both sides' pages are now in the same site. The file's
+    own rule is *"Measured on this branch by running the suite"*, so 136 is what
+    it now says, and the other five counts were re-read from the same run
+    (12 JSON, 2 manifests, 6 `caf` subcommands, 69 external links, 0 redirects).
+
+  - **The remaining contested measurements were re-run against the service
+    repositories and hold**, so nothing in the tree changed to accommodate this
+    merge. The OTEL default is `http://otel-collector:4318` in all three
+    services' code (`identity/internal/telemetry/telemetry.go:102`,
+    `courier/lib/courier/telemetry.ex:86`), which is the column `topology.md`
+    documents; `identity`'s and `courier`'s `config/deploy.yml` set
+    `http://localhost:4318` explicitly, but that is a deploy file's own value and
+    not the default. No service deploys against `/up` (`identity` and `courier`
+    set `path: /readyz`; `billing`'s `proxy:` is commented out). Three of the
+    seven services have a standalone stack — `docker compose config --services`
+    fails outright in `identity` and `billing`, and `darkroom` resolves to
+    `postgres` plus `darkroom`. The log-driver failure is a resolver failure, not
+    a connection failure.
 
 - **The merge that combined `docs-23` and `docs-23b` lost 116 lines of
   `docs-23`'s changelog entry, and left one status line contradicting the body
@@ -39,6 +166,53 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
     status line is the sentence a reader trusts. All three now agree. This page was
     **not** in the conflict set, which is the point: a merge that only reconciles
     the files git flagged as conflicted leaves the auto-merged ones untouched.
+
+- **`architecture/topology.md` described a fleet that has one Postgres.** The
+  per-service table said "Postgres 17, own database" on every row, which reads as
+  a server per service, and the port paragraph reasoned about ports in a world
+  where one container serves the whole fleet.
+
+  - The **Database column now separates the two arrangements that actually
+    exist**: `identity`, `billing` and `courier` have a database **on the shared
+    cluster** and publish no database of their own; `darkroom` and `muse` **still
+    ship a complete `docker-compose.yml` with their own `postgres:17-alpine`** and
+    are not on it. Both clauses were read out of the five compose files rather
+    than assumed, and the difference is stated as a difference rather than
+    smoothed over.
+  - The port paragraph keeps the `KIT_POSTGRES_PORT` claim **exactly as it was**
+    — it was already right — and adds what changed: that one variable is the
+    whole fleet's database, so a second checkout collides with the first, and
+    that a DSN pointed at another service's database now fails with
+    `permission denied for database` rather than a missing role.
+  - Correct sentences were left alone. `Every service is on Postgres 17`, the
+    `darkroom` 5432 trap, the `POSTGRES_PORT` correction and the
+    `pg_isready`-does-not-authenticate note were all still true and are still
+    here.
+  - A new drift subsection records what `kit`'s own fleet gate says, because
+    `caf contract lint` reads manifests and cannot see which container a service
+    runs. `tests/fleet_check.py` was **run against the workspace**: six findings
+    across three repositories, four of them about the database, all `WARN`
+    rather than `FAIL` because none of the three has a `kit.ref` yet. The two
+    Postgres findings are why the Database column is split the way it is. They
+    are a finding against `darkroom` and `muse`, which are read-only from here.
+
+- **`runbooks/backup-and-restore.md` did not say that a dump carries no
+  boundary.** On a cluster where isolation is a *database-level* privilege, this
+  stopped being a limitation. The dump is `pg_dump --format=custom --no-owner
+  --no-privileges`, so it carries no `CREATE ROLE`, no ownership **and no
+  `CONNECT` grant**: a database created by restoring a dump gets Postgres's
+  default, which opens it to every role in the cluster — and the service connects
+  to it successfully, so nothing looks wrong. The existing "not covered" item was
+  extended with that consequence and a link to the one-query check, and it is
+  recorded that a restore *into an existing* database is unaffected, because
+  `restore production` replaces the schema rather than the database. The drill's
+  scratch database has the same property and is now named.
+
+  The 24-hour window, the retention arithmetic, the key-material table and the
+  `billing` four-database row were read and **left alone** — none of them was
+  made false by the single-cluster change. `billing`'s four databases are
+  `config/database.yml`'s `production` block, and the deployment template still
+  provisions one Postgres accessory per service.
 
 <!-- TWO ENTRIES, NOT ONE. `docs-23` and `docs-23b` were two sessions working in
      this repository at the same time, unaware of each other, and both were

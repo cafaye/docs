@@ -11,26 +11,56 @@ a workaround you invent.
 [Architecture](/architecture/) explains *why* the services are split this way.
 This page is the reference you keep open during an incident.
 
+**The data topology is one Postgres, not one per service.** A service that has a
+database has its own database *on a shared cluster*, with its own role and nothing
+that lets it reach another service's. [One cluster, many
+databases](/architecture/one-cluster/) is what the boundary is, what it costs,
+and the one query that tells you whether it is still in place; read it before
+concluding anything from this table about who can see what.
+
 ## The table
 
 | Service | Language | Container port | Local port | Database | `core:` |
 | --- | --- | --- | --- | --- | --- |
-| `identity` | Go | 8080 | 8080 | Postgres via `kit`'s container, own database | `^0.1.0` |
-| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres via `kit`'s container, own database | `^0.2.0` |
-| `courier` | Elixir | 4000 | 4000 | Postgres via `kit`'s container, own database | `^0.1.0` |
-| `darkroom` | Rust | 8080 | 8080 | Postgres 17, own database | `^0.2.0` |
-| `muse` | Python | 8000 | 8000 | Postgres 17, own database | `^0.2.0` |
+| `identity` | Go | 8080 | 8080 | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.1.0` |
+| `billing` | Ruby | 80 | 3000 (host `bin/rails server`) | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.2.0` |
+| `courier` | Elixir | 4000 | 4000 | Postgres via `kit`'s container, own database **on the shared cluster** | `^0.1.0` |
+| `darkroom` | Rust | 8080 | 8080 | Postgres 17, own database — **its own container, not the cluster** | `^0.2.0` |
+| `muse` | Python | 8000 | 8000 | Postgres 17, own database — **its own container, not the cluster** | `^0.2.0` |
 | `guard` | TypeScript (Bun) | 8080 | 8080 | **none** — `Map`s and, with `REDIS_URL`, Redis | `^0.1.0` |
 | `parlor` | Next.js | 3000 | 3000 | **none** | *manifest is a pre-`core` draft* |
 
-**Every service repository pins Postgres 17.** `muse` **was** on 18 and was moved
-down deliberately — one platform, one major version, one upgrade path — and its
-own compose file carries the migration note for a developer holding a real 18 data
-directory. **The pin is not always what you get:** `identity`, `courier` and
-`billing` pin nothing of their own, because they use `kit`'s container, and the
-`.env` `bin/dev` writes on a first run sets `KIT_POSTGRES_TAG=16.6-alpine` over
-kit's `17-alpine` default. [Getting started](/getting-started/) has the version
-you actually get and how to change it.
+**The two bolded clauses in the Database column are different arrangements, not
+different wording.** `identity`, `billing` and `courier` reach their database
+through `bin/dev`, which brings up **one** Postgres container for the whole
+fleet and gives each of them a database and a role inside it; they publish no
+database of their own. `darkroom` and `muse` still ship a **complete**
+`docker-compose.yml` with their own `postgres:17-alpine`, so each of them runs a
+Postgres that is its own, and neither is on the shared cluster. See [the drift
+audit](#cross-repo-drift-audit) — `kit`'s own fleet gate names both.
+
+**17 is the standard, and the tag you get is not always 17.** `muse` **was** on 18
+and was moved down deliberately — one platform, one major version, one upgrade
+path — and its own compose file carries the migration note for a developer
+holding a real 18 data directory. `darkroom` and `muse` pin `17-alpine`
+literally. **`identity`, `courier` and `billing` pin no tag of their own**,
+because they reach their database through `kit`'s container, and that leaves
+**three** values in play rather than one: kit's compose file writes
+`image: postgres:${KIT_POSTGRES_TAG:-17-alpine}`, the `.env` `bin/dev` creates on
+a first run comes from `kit`'s `.env.example` and sets
+`KIT_POSTGRES_TAG=16.6-alpine`, and `caf dev` renders `postgres:16-alpine`. All
+three are tabulated in [the version skew
+trap](/runbooks/service-down/#step-5--the-postgres-version-skew-trap) and
+explained in [getting started](/getting-started/) — change it in your `.env` if
+you need 17, and do not assume it from the compose file.
+
+**Most databases take the name of the service that owns them, and the exception
+is `darkroom`.** `identity`, `billing` and `courier` each set
+`POSTGRES_DB: <service>`, `muse` sets `POSTGRES_DB: muse`, and `guard` and
+`parlor` have no database at all. `darkroom`'s own stack sets **`POSTGRES_DB:
+darkroom_test`** while its role is `darkroom`, so for that one service the
+database named in the DSN and the role that connects to it are spelled
+differently.
 
 Three services want host port **8080** (`identity`, `guard`, `darkroom`), and two
 want **3000** (`billing`, `parlor`), so run one of each at a time on a laptop.
@@ -45,6 +75,15 @@ repository**; the variable that exists is `KIT_POSTGRES_PORT`, it lives in kit's
 `darkroom`'s 5432 landing on a native Postgres that is already there: the
 container reports **healthy** (`pg_isready` does not authenticate) while your
 command reaches the wrong database.
+
+**That one `KIT_POSTGRES_PORT` is the whole fleet's database, not one service's.**
+It is a single container holding a database and a role for every service that
+declared one, so a second `docker compose up` in another service's checkout
+binds a port the first already holds. One cluster is also why
+`identity`, `courier` and `billing` name the same host and differ only in the
+database: `postgres://<service>:<password>@postgres:5432/<service>` over the
+compose network, and a DSN pointed at the wrong service's database fails with
+`permission denied for database` rather than with a missing role.
 
 **`core:` is not uniform, and that is recorded rather than fixed.** Four
 repositories still pin `^0.1.0`, which resolves to a `core` below the `0.2`
@@ -471,6 +510,38 @@ move your consumers in.
 
 Verify against your own checkout rather than trusting this table. A drift audit
 nobody re-runs is a changelog with a table in it.
+
+### The drift a *different* linter can see
+
+`caf contract lint` reads manifests, so it says nothing about which container a
+service runs its database in. `kit`'s fleet gate does, and it was **run against
+the workspace** rather than recalled:
+
+```sh
+cd cafaye/kit && .venv/bin/python tests/fleet_check.py --kit . --repos-dir ../
+```
+
+On the current tree it exits 0 and names six findings across three
+repositories, and **four of the six are about the database**:
+
+| Repository | What the gate says |
+| --- | --- |
+| `darkroom` | Its `postgres` service runs `postgres:17-alpine`, "which is the image kit's stack already ships". A service does not get its own copy of the shared infrastructure: it joins kit's, and its own file becomes an override beside the fetched stack. |
+| `darkroom` | It publishes `5432:5432` in a file that is **merged** with the fetched stack, not substituted for it — compose appends a second file's `ports:` list, so the repository ends up with postgres on kit's port *and* on 5432. |
+| `muse` | Its `db` service runs `postgres:17-alpine`, the same finding under a different service name. |
+| `darkroom`, `guard`, `muse` | No `kit.ref`, so none of them has said which bytes of `kit` it runs. |
+
+**These are warnings, not failures, and the reason is in the gate's own output:**
+a finding inside a repository that *has* a `kit.ref` is a `FAIL`, and inside one
+that has not adopted the stack it is a named `WARN` that leaves the run green.
+All three named repositories are in the second case. **The two that matter here
+are the Postgres ones**, and they are why the Database column above separates
+`darkroom` and `muse` from the other three: the shared cluster exists, and those
+two are still running their own copy of it.
+
+**That is a finding against the service repositories, not against this page, and
+it is not fixed here** — `darkroom` and `muse` are read-only from
+`architecture/topology`.
 
 ### The drift the linter cannot see
 

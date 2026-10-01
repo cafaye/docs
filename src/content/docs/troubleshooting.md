@@ -227,6 +227,128 @@ connection errors or a growing wait, not a single stack trace.
 
 ---
 
+## A service cannot connect to its database
+
+`FATAL: permission denied for database`, or a driver that times out trying to
+connect, or a service whose `/healthz` is 200 and whose `/readyz` is 503. The
+fleet runs **one Postgres with a database and a role per service**, so this is
+now a question about which database the role was allowed into, not about which
+machine to look at. [One cluster, many
+databases](/architecture/one-cluster/) is the full picture; this entry is the
+diagnosis.
+
+### Check
+
+```sh
+export PGPASSWORD=cafaye PGPORT=15500     # or whatever bin/dev printed
+
+# 1. What the server actually said. This is the line that decides everything,
+#    and it is in the DATABASE's log, not the service's.
+docker logs <pg-container> 2>&1 | grep -iE 'permission denied for database|too many connections'
+
+# 2. Does the database exist, and does the role hold CONNECT on it?
+psql -h localhost -U cafaye -d cafaye_platform -X -c "
+SELECT d.datname, r.rolname, r.rolconnlimit,
+       has_database_privilege(r.rolname, d.datname, 'CONNECT') AS may_connect
+  FROM pg_database d, pg_roles r
+ WHERE d.datname = r.rolname ORDER BY d.datname;"
+
+# 3. Is the isolation boundary actually in place, cluster-wide?
+psql -h localhost -U cafaye -d cafaye_platform -X -tAc "
+SELECT coalesce(string_agg(datname, ' '), 'none') FROM pg_database
+ WHERE NOT datistemplate AND has_database_privilege('public', datname, 'CONNECT');"
+```
+
+### What it usually means
+
+**Three reasons, and the error text tells you which.**
+
+**1. The role has no `CONNECT` on that database — and that is the boundary
+working.** Measured, on a cluster provisioned by kit's own init script:
+
+```
+psql: error: connection to server at "localhost" (::1), port 15500 failed: FATAL:  permission denied for database "billing"
+DETAIL:  User does not have CONNECT privilege.
+```
+
+The service is trying to reach **another service's** database. `identity` cannot
+open `billing`, by construction and before any query is parsed. If the DSN you
+are looking at names a database the service does not own, that is the whole
+answer — and a *missing* `REVOKE` would produce something worse, not better, so
+do not go looking for a grant to add. Check #3 tells you which databases are
+open.
+
+**2. The database was created by hand, and Postgres's default opened it to
+every role.** `CREATE DATABASE` grants `CONNECT` to `PUBLIC`. The contract
+applies `REVOKE ALL ON DATABASE … FROM PUBLIC` when it provisions a database, and
+**it only runs on a fresh volume** — `docker-entrypoint-initdb.d` cannot
+re-apply itself to a database that did not exist when it ran. So:
+
+- a database created with `psql`, or by a restore, or by a drill's scratch, has
+  **no boundary at all**; the service connects fine, which is why nothing looks
+  broken;
+- check #3 names the offending database rather than telling you things are fine.
+
+The fix is the same statement, not a service change:
+
+```sh
+psql -h localhost -U cafaye -d cafaye_platform -X -c 'REVOKE ALL ON DATABASE <name> FROM PUBLIC;'
+psql -h localhost -U cafaye -d cafaye_platform -X -c 'GRANT CONNECT, TEMPORARY ON DATABASE <name> TO <name>;'
+```
+
+**3. The connection budget for that role is exhausted, and it looks like a
+timeout.** Each role is capped at **10** connections and the cluster's
+`max_connections` is **200**, so a service that fills its share refuses *itself*
+rather than the other services. The server names it immediately:
+
+```
+FATAL:  too many connections for role "courier"
+```
+
+**A service will not usually show you that.** A driver with a pool queues for a
+free connection instead of failing, so the request waits and then times out, and
+the timeout is what appears in your logs — there is no `too many connections`
+anywhere in the service's own output. `courier`'s readiness probe is the
+documented version of this: with a database gone from under a warm pool it takes
+about **4.4 seconds** to answer 503, which is queue backpressure rather than the
+query timeout. **The error is in step 1, in the Postgres log, and nowhere else.**
+
+**And a fourth thing, which is not a connection failure at all:** a service whose
+migrations have not run reports `relation "users" does not exist` on a
+connection that works fine. That is [a schema
+mismatch](/running-the-gates/#identity--needs-a-database-and-migrations-applied),
+and the error naming a relation rather than a host is the tell.
+
+### Do
+
+Diagnose from the **database's** log, not the service's, and do not restart the
+service first: a restart replaces a warm pool with a cold one and the underlying
+cause is still there.
+
+| What check #3 reports | What it means | What to do |
+| --- | --- | --- |
+| `none` | the boundary is in place on every database in the cluster | the service is pointed at the wrong database, or over its connection limit |
+| a database name | that database was never given the revoke, so every role can open it | apply the two statements above, then re-run the check |
+| a service's **own** name | that database exists but was created outside the init script — by hand, by a restore, or by a drill | same two statements, and then find out who created it |
+
+**Adding a service to a cluster that is already running** is
+`bin/dev db grant <service>`, which **prints** the statements rather than running
+them, because a half-provisioned role is a worse outcome than a printed one. Run
+it, then add the name to `KIT_POSTGRES_DATABASES` in your `.env` so a fresh
+volume provisions it without any of this. Naming a service in that variable and
+re-running `bin/dev up` creates **nothing**.
+
+**Raise the limit only after you know which of the two it is.** A pool that is
+genuinely too small and a pool that is leaking look identical from the service;
+`SELECT count(*) FROM pg_stat_activity WHERE usename = '<service>'` tells them
+apart while the traffic is still happening. A service that needs more than 10
+raises it in **two** places — `KIT_POSTGRES_ROLE_CONNECTIONS` in `.env` and the
+pool size in its own database config, **inner cap below outer cap** — and says
+why in the change. An inner cap larger than the role limit does not give the
+service more connections, it gives it this same error.
+
+---
+
 ## `/v1/accounts/{id}` returns 404 for somebody who was just invited
 
 ### Check
@@ -554,6 +676,9 @@ same evidence, and both are cheap to act on:
 
 - [A service is down](/runbooks/service-down/) — the same ground, keyed by
   component.
+- [One cluster, many databases](/architecture/one-cluster/) — the data topology,
+  the connection budget, and the query that tells you whether the boundary is
+  still in place.
 - [Runbooks](/runbooks/) — the five procedures.
 - [Topology](/architecture/topology/) — ports, probes, environment variables,
   and the cross-repo drift audit.
