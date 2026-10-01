@@ -49,7 +49,7 @@ bin/prime             # or: mise run prime
   reads its vocabulary out of the repository's own prose rather than from a list
   written beside it, so there is one place that says what `caf` can do.
 - The counts are printed, because a check that reports nothing looks like a
-  check that found nothing: 108 shell fences, 12 JSON fences, 2 manifests, 6
+  check that found nothing: 111 shell fences, 12 JSON fences, 2 manifests, 6
   `caf` subcommands, 69 external links, 0 redirects. Measured on this branch by
   running the suite; this sentence said 103 and 50, which is the failure it
   exists to prevent, in the file that states it.

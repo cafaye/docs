@@ -37,7 +37,8 @@ specs. `caf contract resolve` answers the question per manifest:
 `caf contract resolve '^0.1.0' 0.2.0` → `no`.
 
 `darkroom`'s image is built from **`docker/Dockerfile`**, not `./Dockerfile`, and
-with `--build-arg --features s3` for the deployment build.
+needs no build flags — that file already runs `--features s3`, so the default
+build is the deployment build.
 
 ## Probes
 

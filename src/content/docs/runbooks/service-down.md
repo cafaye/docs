@@ -366,13 +366,15 @@ is set, and that refusal is the correct message rather than a missing default:
 :::caution[`bin/dev` brings the infrastructure up and then fails on those three services]
 **This is a real, reproduced failure, and it is in the three repositories' own
 compose files rather than in `kit`.** All three of `identity`, `courier` and
-`billing` set their container log driver to syslog pointing at the collector:
+`billing` set their container log driver to syslog pointing at the collector —
+quoted from `identity`'s compose file:
 
-```yaml
+```
 logging:
   driver: syslog
   options:
     syslog-address: "tcp://otel-collector:15514"
+    tag: "identity"
 ```
 
 **Docker resolves a log-driver address with the host's resolver, not the compose

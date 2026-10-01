@@ -10,6 +10,145 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Fixed
 
+- **The other four runbooks were written in the same era as the backup one, and
+  carried the same class of defect: procedures that do not run.** Checked every
+  runbook plus `guides/`, `getting-started`, `pilot` and `upgrading` for
+  references to tooling that no longer exists. **`bin/backup.sh`,
+  `templates/backup/` and `Dockerfile.backup` were already gone** — yesterday's
+  rewrite was the last page that mentioned them, and it mentions them only to
+  record their deletion — so that half of the packet found nothing.
+
+  What it did find was the defect the backup page was rewritten for, one layer
+  over: **a `docker compose` command that fails.** `identity`, `courier` and
+  `billing` ship a compose file that is an **override** on `kit`'s stack, not a
+  whole stack, so it has no Postgres image of its own. Run alone it starts
+  nothing:
+
+  ```
+  service "postgres" has neither an image nor a build context specified: invalid compose project
+  ```
+
+  Five pages told a reader to run it — `getting-started`, `pilot`,
+  `running-the-gates`, `services/identity`, `services/courier`. All now say
+  `bin/dev`, which is what ships in those three repositories.
+
+- **The Postgres port table was wrong in every row that mattered.** The site
+  said four repositories publish 5432 and that `POSTGRES_PORT=5433` moves one.
+  Measured against the compose files: **only `darkroom` publishes 5432** and
+  only `muse` publishes 5433. `identity`, `courier` and `billing` publish nothing
+  of their own and use `kit`'s container, published on **15500**. **No compose
+  file in the fleet reads `POSTGRES_PORT`** — the variable that exists is
+  `KIT_POSTGRES_PORT`, it is `kit`'s rather than a service's, and it is set in
+  `.env`.
+
+  The real reason you run those three one at a time is not a port at all: they
+  share one Postgres container and each **renames its database**
+  (`POSTGRES_DB: identity` / `courier` / `billing`), and compose merges those
+  overrides last-one-wins. Two up together and one service's DSN points at a
+  database that does not exist — which presents as
+  `role "…" does not exist` and reads exactly like a wrong password.
+
+- **`muse` was documented as `postgres:18-alpine`.** It is not, and has not been:
+  its compose file records the move off 18 onto `postgres:17-alpine`. Worse, the
+  claim that replaced it — "every Postgres in the fleet is 17" — would have been
+  **wrong too**, because `bin/dev up` starts **`postgres:16.6-alpine`**.
+  `kit`'s compose file defaults `KIT_POSTGRES_TAG` to `17-alpine` but the `.env`
+  it creates on a first run comes from `kit`'s `.env.example`, which pins
+  `16.6-alpine`. The default in the compose file is not the version you get, and
+  it matters because `pg_dump` is silent about a server that is much older and
+  loud about one that is newer.
+
+- **`getting-started` documented two `docker build` invocations that cannot
+  parse.** `courier`'s line passed `--build-arg SERVICE_NAME=courier`; that
+  Dockerfile declares no such argument and its compose file passes no `args:`,
+  so the flag did nothing while looking like it configured something. `darkroom`
+  passed `--build-arg --features s3`, and `--build-arg` needs a `NAME[=VALUE]`
+  after it, so Docker refuses before it reads a Dockerfile
+  (`flag needs an argument: --build-arg`). `docker/Dockerfile` already runs
+  `--features s3`, so the deployment build needs no flag at all — a third page,
+  `architecture/topology`, carried the same invalid flags and now does not
+  either.
+
+- **`kit`'s proxy healthcheck is `/up`, which is a liveness check that only
+  `billing` serves.** `deploy.yml.erb` comments `/up` as "a READINESS endpoint,
+  not a liveness one" and `kamal deploy` gates the rollout on it. In `billing`,
+  `/up` is `rails/health#show` — it answers 200 if the app booted and **does not
+  touch the database**; the readiness endpoint is `/readyz`. The other five
+  services do not serve `/up` at all, so a proxy pointed at it gets a 404 and
+  the rollout never goes green. Both facts are now stated, with the caveat that
+  the template is `kit`'s to fix.
+
+- **`courier` can send mail now, and two runbooks said it could not.**
+  `tenant-provisioning` and `secret-rotation` both said *"no provider adapter is
+  configured, so nothing leaves the process"*, and named the Swoosh pipeline and
+  its notification store as the reason. As of `courier` `a8f15cc` the adapter is
+  `COURIER_MAIL_ADAPTER=smtp` with the `COURIER_SMTP_*` variables, it ships
+  `gen_smtp`, and a courier with no adapter configured **refuses to boot** — the
+  fix for a `Swoosh.Adapters.Local` default that accepted every send, wrote an
+  outbox row and published `courier.email.delivered` for mail nobody received.
+
+  The gap that remains is smaller and is now named exactly: **nobody sends
+  `team_invitation`.** `courier` has the template, `identity` has a client for
+  `POST /v1/messages` and sends `password_reset` and `welcome` through it, and
+  the invitation is still one unmade call. So the operator still delivers the
+  token — for a completely different reason than the page gave.
+
+- **Two secrets were missing from the rotation inventory, and both are real.**
+  `secret-rotation` listed an email provider credential as "**n/a yet**" and had
+  no row for a scoped API token at all. Added the SMTP credential (with the full
+  variable table and the refusal that makes it required) and identity's
+  `api_keys` credential, read out of `migrations/00011_api_keys.sql` and the
+  router: the token is returned **once** and only a SHA-256 digest is stored,
+  `expires_at` is required and capped at 365 days by a `CHECK` in the database,
+  and mint/list/revoke are all **owner-only**. Rotation is an issuance rather
+  than a cutover, so both keys are valid at once. Also recorded that
+  `identity.api_key.revoked` covers expiry as well as revocation and **there is
+  no sweeper**, so the expiry half is never emitted.
+
+- **`tenant-provisioning` cited a commit that does not exist.** It claimed every
+  quoted response came from "a real session against `identity` at commit
+  `27fe8a6`". That sha is not in `identity`'s history — `git cat-file` refuses
+  it — and it is a commit in **`caf`**, so the page named the wrong
+  repository's history. Replaced with what is verifiable without re-running
+  anything: the routes, the role minimums and the members-list defect read off
+  `identity` `08e346d`, with an instruction to re-run before relying on it.
+  Step 8 also used `$BOB`, which nothing in the runbook ever set; step 7 now
+  exports it from the one response that carries a `user_id`.
+
+- **`bin/dev up` does not currently start `identity`, `courier` or `billing`, and
+  the site said nothing.** This is the one finding in this packet that is a
+  defect in another repository rather than in the prose, so it is recorded here
+  rather than quietly worked around. All three compose files set
+  `logging.driver: syslog` with `syslog-address: "tcp://otel-collector:15514"`,
+  and **Docker resolves a log-driver address with the host's resolver, not the
+  compose network's** — `otel-collector` exists only inside the network. Run
+  `bin/dev up` and Postgres, NATS, Redis, the collector, Grafana, Tempo, Loki
+  and Mimir all come up healthy, and then:
+
+  ```
+  Error response from daemon: failed to create task for container:
+  failed to initialize logging driver: dial tcp: lookup otel-collector on
+  0.250.250.200:53: no such host
+  ```
+
+  with nothing about the database in it. It reproduces with no cafaye involved
+  at all: `docker run --rm --log-driver syslog --log-opt
+  syslog-address=tcp://otel-collector:15514 alpine:3 echo hi`.
+
+  So the answer to "the port answers nothing" is currently **not** a crash to
+  investigate: there is no container, no log and no readiness body. Both
+  `service-down` and `getting-started` now say so, and point at the fix in the
+  service repositories rather than shipping a workaround as if it were the
+  procedure. `identity`, `courier` and `billing` own this one.
+
+- **A container name is not a service name.** `service-down` told a reader to
+  `docker logs --since 30m "$SERVICE"`. Compose names a container
+  `<project>-<service>-1` and the project here is **not** the repository —
+  `kit`'s stack sets `name: ${KIT_STACK_NAME:-cafaye}`, so `identity` is
+  `cafaye-identity-1` and its database is `cafaye-postgres-1`. `docker logs
+  identity` says `No such container`, which reads like "it is not running" rather
+  than "you named it wrong".
+
 - **The backup runbook was a procedure for a toolchain kit deleted.** It told an
   operator to run a script that is not there. kit-20 removed
   `templates/backup/`, `templates/bin/backup.sh` and `docker/Dockerfile.backup` —
