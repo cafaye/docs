@@ -12,7 +12,10 @@ self-hostable, and connected by typed contracts. It is an **organization, not a
 single repository**: every service below lives in its own repo, versioned and
 installable on its own. You can take the one you need rather than adopting the
 whole platform, run the whole stack on your own infrastructure, and keep it
-alive with the runbooks on this site.
+alive with the runbooks on this site. The code is free and MIT;
+[what is sold is managed hosting, upgrades, and support](/pricing/), and the
+[licensing page](/licensing/) says what the grant permits and where it is not
+written down yet.
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
@@ -26,6 +29,11 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
     Install the CLI, run a service against local Postgres, and see what exists
     today — with every unbuilt command marked as such.
     [Getting started](/getting-started/)
+  </Card>
+  <Card title="Pricing, licence and security" icon="document">
+    What a unit costs, what MIT permits you to do with it, and how your
+    credentials are handled — with no invented prices and no softened gaps.
+    [Pricing](/pricing/) · [Licensing](/licensing/) · [Security and trust](/security/)
   </Card>
   <Card title="Architecture" icon="open-book">
     What each service owns, how they talk, and why the boundaries are where
@@ -82,27 +90,30 @@ Polyglot by design, connected by typed contracts, never by shared code.
 
 :::caution[Early development]
 cafaye is **early**, and this site is written to say so rather than around it.
-Of the ten `caf` subcommands, **five** do real work today (`version`, `doctor`,
-`dev`, `contract lint`, `contract resolve`); the other five parse their flags and
-return `not implemented in v0`. There is no hosted platform and **no broker** —
-no service starts an outbox publisher loop, so an event is a row and nothing
-more. Three of the seven services are built past their first milestone
-(`darkroom` ships signed uploads and Cloudflare R2; `courier` ships outbound
-webhooks over the Standard Webhooks spec; `guard` ships Redis-backed rate
-limits), and three have a gap a reader will hit: **`identity` cannot reset a
-password or renew an access token**, `muse`'s auth does not verify the token it
-is given, and **`guard` routes nothing**. Every service page states plainly what
-is built and what is not, and [Getting started](/getting-started/) runs the whole
-path end to end with the commands that actually exist today.
+Of the twelve `caf` subcommands, **eight** do real work today (`version`,
+`doctor`, `dev`, `contract`, `env`, `mcp`, `reclaim`, `help`); the other four
+(`init`, `new`, `deploy`, `gen`) parse their flags and return `not implemented in
+v0`. There is no hosted platform and **no broker** — no service starts an outbox
+publisher loop, so an event is a row and nothing more. Three of the seven services
+are built past their first milestone (`darkroom` ships signed uploads and
+Cloudflare R2; `courier` ships outbound webhooks over the Standard Webhooks spec;
+`guard` ships Redis-backed rate limits), and two have a gap a reader will hit:
+**`identity` cannot reset a password or renew an access token**, and **`guard`
+routes nothing**. Every service page states plainly what is built and what is not,
+and [Getting started](/getting-started/) runs the whole path end to end with the
+commands that actually exist today.
 
-**The licensing is unfinished and uneven.** One repository has a licence file
-(MIT), four declare a licence in their manifest, `muse` declares **AGPL-3.0-only**,
-and the rest state none at all. If you are deciding whether to build on this
-commercially, read [what the licence
-permits](/pilot/#the-licence--read-this-one) before you do.
+**The licensing is unfinished and uneven, and the decision is already made.**
+**Three repositories carry an MIT licence file**, four declare MIT in their
+manifest, `muse` declares **AGPL-3.0-only**, and **seven state no licence at
+all** — which for a public repository means "all rights reserved", not "MIT". The
+intent is MIT across the fleet; the grant is not written down in those seven yet,
+and all three purchasable units are among them. Read [licensing](/licensing/) and
+[what the licence permits today](/pilot/#the-licence--read-this-one) before you
+build on this commercially.
 
 **A green badge is only worth what it ran.** `kit`'s reusable workflow is callable
-now and eight repositories call it, but most of the fleet keeps its interesting
+now and ten repositories call it, but most of the fleet keeps its interesting
 tests in a second tier that does not run by default. `identity` is the one
 repository whose CI now refuses to skip that tier. See [Running the
 gates](/running-the-gates/).

@@ -140,6 +140,9 @@ Pages are Markdown and MDX in `src/content/docs/`; the file path is the URL.
 src/content/docs/
 ├── index.mdx                 home — what cafaye is, plus the services table
 ├── pilot.md                  the hosted-pilot path: nothing → running, and every gap
+├── pricing.md                the three units, what is free, and the seven open questions
+├── licensing.md              MIT across the fleet, and the seven repos that do not say so
+├── security.md               credentials at rest, redaction, the CI secret scan, the gaps
 ├── getting-started.md        the six-step path: doctor → install → init → local → deploy
 ├── upgrading.md              the migration note: what breaks, and in what order
 ├── contracts.md              cafaye.yml, the event envelope, OpenAPI, the five-part rule
@@ -231,6 +234,34 @@ cannot see*, is the part that matters most:
   failure names a relation (`public.oidc_clients`) rather than the missing step.
 - `GET /v1/accounts/{id}/members` returns only each member's `role`; the ids come
   back empty.
+- **`caf` has moved on and this site's `getting-started.md` has not caught up.**
+  `master` has **twelve** subcommands, not ten: `env` and `reclaim` are new and
+  `mcp` is no longer a stub, so **eight** work and **four** are stubs
+  (`init`, `new`, `deploy`, `gen` — `internal/cli/stub_test.go` is the table of
+  record). `caf doctor` now prints **three** sections in a
+  `check / state / detail / fix` shape where the page quotes two tables with
+  `ok / missing` rows, and it has gained a reclamation section. Both were measured
+  from a binary built at `caf` `f5d3020`, not inferred. **Left in place
+  deliberately:** fixing the count while leaving three stale `doctor` outputs would
+  make the page internally inconsistent and would claim an audit that did not
+  happen. It needs its own packet.
+- **`muse`'s auth is no longer a stub**, and `pilot.md` still says it is. Measured
+  at `muse` `e3f53b0`: the token is verified against `identity`'s JWKS with the
+  algorithm pinned to `RS256` at the decoder, required claims include
+  `account_id`, and an unreachable key set is a `503` rather than a `401`. The
+  correction is on [Security and trust](/security/) and in the two service pages
+  this repository owns; `pilot.md` is not edited, because it is commit-pinned to
+  an earlier measurement and that page is the fleet's sell-readiness audit.
+- **`identity` has scoped API keys and an admin audit trail, and
+  `services/identity.md` lists scoped API tokens as not built.**
+  `POST /v1/accounts/{id}/api-keys` is mounted and owner-only, with
+  `GET /v1/accounts/:id/admin/audit-log` beside it. Not corrected in this packet:
+  it is a service status line, and re-deriving every one of them is the drift
+  audit's job rather than a sales page's.
+- **No `SECURITY.md` in any of the fifteen repositories**, no `security@` address,
+  and no security.txt. Nothing opts into `zizmor`, so no repository audits its own
+  workflow shape either. Recorded on [Security and
+  trust](/security/) rather than left as an unstated absence.
 - `/favicon.svg` is a 404 on every page. Starlight hard-defaults it and this
   repository has no brand asset; inventing one is a decision this project has
   explicitly not made.

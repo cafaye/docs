@@ -18,14 +18,20 @@ truth, not hedging.
 | [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, the subscription lifecycle, webhooks in and out |
 | [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 — email pipeline, preferences, Oban outbox worker, signed outbound webhooks. Publishes one event |
 | [darkroom](/services/darkroom/) | Media uploads, variants, object storage | Rust | v0 — signed uploads, tenant isolation, variants, S3 **and Cloudflare R2** |
-| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth is a stub. **The only service exporting telemetry** |
+| [muse](/services/muse/) | LLM routing, vault, token metering | Python | v1 core — auth verifies the token against identity's JWKS. **The only service exporting telemetry** |
 | [guard](/services/guard/) | Public gateway, JWT verify, rate limits | TypeScript | v0 — real auth, API keys, Redis-backed limits, **no routing** |
 | [parlor](/services/parlor/) | App shell template + admin | Next.js | In progress — accounts, invitations, billing screens. **No admin surface, no e2e suite** |
 
-Three of those status lines carry a gap that will bite a reader who skips them:
-`identity` cannot reset a password or renew an access token, `muse`'s auth does
-not verify the token it is given, and `guard` forwards nothing. Each is stated
-on its own page with the consequence.
+Two of those status lines carry a gap that will bite a reader who skips them:
+`identity` cannot reset a password or renew an access token, and `guard` forwards
+nothing. Each is stated on its own page with the consequence.
+
+A third row changed on 2026-10-01 and is recorded rather than quietly rewritten:
+`muse`'s status line used to read *auth is a stub*, which was true when it was
+written and is not true of the current source — `muse` verifies the bearer token
+against `identity`'s JWKS. [Security and trust](/security/) carries the measured
+detail and the commit, and the [hosted-pilot page](/pilot/) still carries the
+older sentence, which this repository does not edit.
 
 For the path that takes you from nothing to a running deployment, read
 [Hosted pilot onboarding](/pilot/) — it is the same walk-through aimed at

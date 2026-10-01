@@ -10,6 +10,71 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Added
 
+- **`pricing.md`, `licensing.md`, `security.md`** — the three pages a stranger
+  evaluating a purchase had no way to find, in one sidebar group
+  (`Pricing, licence and security`) placed directly under `Hosted pilot` because
+  the same reader reaches both. Each page is written to the same rule the rest of
+  the site is: a claim is either a citation or it is not made.
+  - **`pricing.md`** states the model — the code is free, we sell managed
+    hosting, upgrades and support, you buy one of three units, `parlor` is free
+    permanently — and then says the thing a price list usually hides: **nothing
+    is purchasable today, and there is no price on the page.** All three paid
+    products are given a table per unit, and each row's `today` column is a
+    measured fact rather than an estimate. The seven undecided numbers are
+    [listed on the page](https://docs.cafaye.com/pricing/) as questions for us
+    rather than guessed, because a fabricated price is worse than a blank one.
+  - **`licensing.md`** states the decision — MIT across the fleet, including
+    every purchasable unit — and then the measured state, which is not the same
+    thing: **seven of fifteen repositories carry no licence at all** and `muse`
+    declares **AGPL-3.0-only**. It explains that GitHub's default for a public
+    repository with no licence is "all rights reserved", that an intent is not a
+    grant, and that **all three purchasable units are in the "nothing" row** —
+    which is the one sentence on that page most likely to stop a purchase in
+    somebody's own legal review. The re-derivation command is published on the
+    page so the table can be re-run rather than trusted. It measures **committed
+  `master`** with `git show HEAD:` rather than the files on disk, because a
+  licence grant was being landed across the fleet in uncommitted working trees
+  while this page was written — and reporting another worker's uncommitted work
+  as a shipped fact is the exact failure this packet exists to prevent.
+  - **`security.md`** covers credentials at rest, redaction, and the CI secret
+    scan, with every claim pointing at a file: AES-256-GCM in `muse`'s vault and
+    `courier`'s `SecretBox` and `identity`'s MFA vault (three languages, one
+    design, three named non-defaults); argon2id for human-chosen passwords and
+    SHA-256 for machine-generated tokens, with the reason from the source; the
+    `Secret` type and `muse`'s prompt-and-completion **canary test**; and
+    `kit`'s always-on `secrets` job — full history, `--redact`, pinned by a
+    sha256 the repository owns, no network call, no dangerous trigger. It also
+    names **ten repositories that run that scan and five that do not, `docs`
+    among them**, lists the two unrotatable secrets and the JWKS revocation
+    window, and states plainly that "never logged" is a mechanism in `muse` and
+    not a fleet-wide log audit.
+- **Six new findings in `README.md`, all re-measured rather than recalled** — see
+  the Fixed section below for the two that changed a page.
+
+### Fixed
+
+- **`muse`'s auth is not a stub, and this site said it was in four places.**
+  Measured at `muse` `e3f53b0`: the bearer token is verified against `identity`'s
+  published JWKS with the algorithm **pinned to `RS256` at the decoder** rather
+  than read from the token, `REQUIRED_CLAIMS` includes `account_id`, the
+  operation's capability is checked separately from the signature, a token whose
+  two authorisation claim names disagree is refused, and an unreachable key set
+  is a `503` rather than a `401` — the service does not serve unauthenticated
+  traffic when `identity` is down. Corrected in `services/muse.md`,
+  `services/index.md` and the home page, each with the commit and a pointer to
+  the measured detail. **`pilot.md` is deliberately not edited**: it is pinned to
+  an earlier measurement and is the fleet's sell-readiness audit, so the drift is
+  recorded as a finding on `security.md` and in `README.md` rather than resolved
+  by rewriting the page that found it.
+- **The licensing summary on the home page was wrong in three numbers.** It said
+  one repository has a licence file, four declare one, and eight call kit's
+  workflow. Re-derived on 2026-10-01: **three** carry an MIT licence file
+  (`cafaye-py`, `cafaye-rb`, `cafaye-ts`), four declare MIT in a manifest, `muse`
+  is AGPL, **seven state nothing**, and **ten** repositories call
+  `ci.reusable.yml@master`. It also now says the decision — MIT across the fleet —
+  alongside the gap, which is the pairing a buyer needs and the one the old
+  sentence lacked.
+
 - **`gate.yml`** — what `bin/prime` is worth in this repository, declared
   against `core`'s `schemas/gate.schema.json` and checked by
   `core/harness/bin/gate-check`. Six repositories declared their gate; this is

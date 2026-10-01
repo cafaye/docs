@@ -67,6 +67,17 @@ export default defineConfig({
           label: 'Hosted pilot',
           items: [{ slug: 'pilot' }],
         },
+        // `Pricing, licence and security` answers the three questions a stranger
+        // evaluating a purchase has and cannot answer from the rest of the site:
+        // what it costs, what they are legally agreeing to, and what happens to
+        // their credentials. It sits directly under `Hosted pilot` because the
+        // same reader reaches both — somebody who has evaluated the platform and
+        // is now looking for the commercial terms — and it sits there rather than
+        // at the bottom so it is not buried under runbooks a buyer never opens.
+        {
+          label: 'Pricing, licence and security',
+          items: [{ slug: 'pricing' }, { slug: 'licensing' }, { slug: 'security' }],
+        },
         {
           label: 'Start here',
           items: [{ slug: 'getting-started' }, { slug: 'contracts' }],

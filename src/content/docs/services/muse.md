@@ -31,10 +31,20 @@ theoretical. Two things follow that are easy to miss:
   across services yet.** See [Observability](/observability/#errortype).
 
 **Not in this version:** streaming, tool calls, embeddings, images, batches, and
-a real admin UI. **Auth is a stub** — the bearer header's presence is checked and
-the token is not verified; real JWT verification arrives with the `guard`
-contract. And the `muse.tokens.consumed` event it writes to `outbox_events` is
-**never published to a bus**, because no service starts a publisher loop.
+a real admin UI. And the `muse.tokens.consumed` event it writes to `outbox_events`
+is **never published to a bus**, because no service starts a publisher loop.
+
+**This status line said *auth is a stub* until 2026-10-01, and it was wrong by
+then.** `muse` verifies the bearer token against `identity`'s published JWKS with
+the algorithm **pinned to `RS256` at the decoder** rather than read from the
+token, requires `iss`, `aud`, `sub`, `exp`, `iat`, `jti` and `account_id`, checks
+the operation's capability separately from the signature, and refuses a token
+whose two authorisation claim names disagree. An unreachable key set is a `503`,
+never a `401`, and **the service does not serve unauthenticated traffic when
+`identity` is down.** `tests/test_auth.py` asserts the token never reaches a log,
+a span or an error body. [Security and trust](/security/) carries the measured
+detail and the commit, and the [hosted-pilot page](/pilot/) still carries the
+older sentence — this repository does not edit that page.
 :::
 
 Routing means fallbacks: when one provider is rate-limited or down, `muse` is
