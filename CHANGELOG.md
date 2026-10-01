@@ -10,6 +10,124 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Fixed
 
+- **The backup runbook was a procedure for a toolchain kit deleted.** It told an
+  operator to run a script that is not there. kit-20 removed
+  `templates/backup/`, `templates/bin/backup.sh` and `docker/Dockerfile.backup` —
+  3,012 lines that reimplemented what `kamal-backup` already provides — and a
+  previous rewrite of this page was **stashed rather than merged** because
+  merging it would have shipped a runbook for a mechanism that no longer
+  existed. All three paths verified absent.
+
+  `runbooks/backup-and-restore.md` is rewritten against the mechanism that does
+  exist: **`kamal-backup` 0.5.2 as an ordinary Kamal accessory**, dumping one
+  Postgres per service with `pg_dump` and writing it through restic to a
+  Cloudflare R2 bucket, on `backup.schedule: 1d`. The page no longer contains a
+  `pg_dump` command the reader is expected to run by hand.
+
+  What changed beyond the mechanism, and why each is load-bearing:
+
+  - **The data-loss window is now stated.** A scheduled dump is not PITR: **up
+    to one backup interval is lost if the primary database is destroyed, which
+    with the shipped schedule is up to 24 hours.** The old page said "there is no
+    point-in-time recovery" and left the operator to do the arithmetic.
+  - **Four keys that make a dump unreadable are named, and three of them were
+    absent from the old page entirely.** `RESTIC_PASSWORD` gates the whole
+    repository; `MUSE_VAULT_KEY` gates `vault_secrets.ciphertext`;
+    **`COURIER_SECRET_BOX_KEY` gates every `webhook_endpoints.secret`**, so
+    without it courier cannot sign a single delivery; `MFA_ENCRYPTION_KEY` gates
+    `mfa_credentials.secret_ciphertext`. The first three were read out of the
+    service repositories' own source, not recalled.
+  - **3-2-1 is claimed nowhere, because it is not met.** One repository, one
+    backend, one provider. kit's own `templates/kamal/README.md` records that
+    **R2 has no object versioning and no Object Lock — a deleted object there is
+    gone and nothing here can bring it back** — so the mitigation is bucket
+    access control, not the retention policy. The off-site half of the rule is
+    the one that is met.
+  - **"What is not backed up" is now specific to this platform** rather than
+    general: `darkroom`'s object bucket (outside Postgres *and* outside restic,
+    with `DARKROOM_OBJECT_STORE` defaulting to `memory`), Redis if you run it for
+    `guard`'s rate limiter, Postgres roles and tablespaces — a `pg_dump` of one
+    database carries no `CREATE ROLE` — and, if you also run kit's local stack,
+    the Tempo/Loki/Mimir volumes, which delete their own contents on a
+    1h/24h clock anyway.
+  - **`billing` has four Postgres databases, not one**, and the backup covers
+    only `billing_production`. That is correct — the other three are
+    `solid_cache`, `solid_queue` and `solid_cable` — and the page now says why
+    rather than leaving the old table's "one per install".
+
+  **A second finding, and the more important one: no service has adopted any of
+  it.** Checked across all seven service repositories on this branch — **none has
+  a `config/kamal-backup.yml`**, which is the file that says what to back up and
+  where to put it, and **only `billing` has a `config/deploy.yml` at all**, where
+  it is the stock Rails-generated file whose `accessories:` block is commented out
+  and which contains no backup accessory. A runbook that describes a working
+  mechanism without saying that nothing is switched on is a runbook that reads as
+  "you are protected", so the page now opens with a `:::caution` block saying so
+  and pointing at kit's seven-step adoption list. Recorded here rather than fixed
+  in `billing`: a service repository is read-only from this one, and adopting the
+  template is kit's call, not this page's.
+
+  **Two pieces of the old page's advice are now wrong, and both are the tool's
+  job rather than the reader's.** It said to create a scratch database first and
+  to pass `pg_restore --exit-on-error`. `kamal-backup` replaces the target schema
+  itself (`DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;` — which
+  is what sidesteps `pg_restore --clean`'s foreign-key ordering failure) and then
+  raises if `pg_restore` reported `errors ignored on restore: N`, so a partial
+  restore cannot exit 0. Restoring into a database the application already
+  migrated is the normal case, not the error case.
+
+  **The old page's quoted command output is gone, and the replacement is real.**
+  It presented `pg_dump` headers, a table of row counts and a `/readyz` body as
+  *"real output from a verified restore"*. None of it can be reproduced against
+  this mechanism. Every command on the new page was then **run** —
+  `kamal-backup` 0.5.2 against `restic` 0.19.1 and PostgreSQL 18.4, taking a real
+  dump into a real restic repository and restoring it — and the output quoted on
+  the page is that output. What it bought, beyond the page reading as a
+  procedure rather than a proposal:
+
+  - **The claim that a count-only check reports an empty restore as a pass is now
+    measured.** The same snapshot, containing a `users` table with three rows and
+    an `audit_log` table with none, was drilled twice: `psql -tAc "SELECT count(*)
+    FROM audit_log" --dbname=<scratch>` counted zero rows, exited 0, and the
+    drill reported `status: ok`. The `ON_ERROR_STOP=1` + `RAISE EXCEPTION` form
+    the gem's reference material does not use reported `status: failed` and exit
+    1 with `ERROR: drill: table audit_log is empty in kitdemo_drill`. Two
+    verdicts, one snapshot.
+  - **A check that omits `--dbname` fails misleadingly**, and this was not
+    predicted from the source: `FATAL: database "kaka" does not exist`, against
+    the scratch database the drill had just created. It reads like a broken
+    restore and is a missing flag. The page now says so, and says to run
+    `--print-check` before trusting a hand-written check.
+  - **The 24-hour window is measured from the previous backup's _finish_, not
+    from the top of the hour**, so it is 24 hours *plus the duration of the dump*.
+    The page quotes the tool's own two timestamps
+    (`No backup due. Last backup finished at … Next backup is due at …`).
+  - **A failed backup is not retried until the next interval** — the scheduler
+    catches the error, logs it, and *then* sleeps the full 24 hours. But because a
+    failure does not update the state file, a hand-run `kamal-backup backup` is
+    already due and retries immediately. The runbook now says both, because
+    "retried every 24h" read alone would leave an operator waiting a day for a
+    backup they could have forced.
+  - **The schedule state is a volume, and losing it loses the schedule.** With no
+    writable `/var/lib/kamal-backup`, the tool cannot persist "last finished",
+    so every invocation is treated as due: three full dumps in three minutes, with
+    no complaint. That is what kit's `<service>_backup_state` mount is for, and it
+    is why a rebuilt host does not know whether it is overdue.
+  - **`forget_after_backup` is on by default**, so `restic forget --prune` runs
+    after *every* backup, not only when asked.
+
+  Two things the page deliberately still does **not** claim: the exact
+  `postgresql-client` major version inside the accessory image (unverifiable from
+  this repository, so the page tells the operator to read
+  `tool_versions.pg_dump` out of `kamal-backup evidence` instead), and any
+  capability claim sourced to a web page rather than to something in the fleet.
+
+  **A drift finding, recorded rather than smoothed over: kit pins the accessory
+  image to `0.5.2` and the current gem release is `1.0.0`.** The page is written
+  against `0.5.2`, because the remote commands refuse to run when the local gem
+  and the accessory image differ. Bumping the pin is a decision for kit, not for
+  this page.
+
 - **The site told buyers we have no observability, and `core`'s own record said
   the same thing.** Four pages carried a sentence that was false: *"Exactly one
   service exports any signal at all: `muse`"* (`observability.md`),

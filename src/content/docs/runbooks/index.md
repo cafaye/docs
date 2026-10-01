@@ -43,8 +43,8 @@ nothing. Every piece of durable state is in a Postgres database, and Postgres is
 the only thing in this platform that a backup runbook has to care about.
 **Object storage is the second thing and it now exists** — `darkroom` hands out
 presigned writes into a bucket you choose (S3 or Cloudflare R2), and the bucket is
-**not** covered by `pg_dump`. A restored database whose objects are gone has
-assets pointing at nothing.
+**not** covered by the database dump. A restored database whose objects are gone
+has assets pointing at nothing.
 
 **Migrations are a deploy step, not a boot step.** No service migrates on boot.
 Run them as a job before the new image rolls out, and fail the deploy on a
