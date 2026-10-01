@@ -24,7 +24,7 @@ directory rather than an R2 bucket. The gem treats both identically — it hands
 `RESTIC_REPOSITORY` to restic — so what follows is verified against the same code
 path your deployment runs.
 
-:::caution[Status: the tooling is here, no service has adopted it yet]
+:::caution[Status: the tooling is here, two services have adopted it, nothing has run it]
 Everything below describes what **`kamal-backup` does**, and every command in it
 works. But **nothing in the fleet is taking scheduled backups today**, and the
 reason is a missing file rather than a broken one.
@@ -32,18 +32,20 @@ reason is a missing file rather than a broken one.
 Verified across the seven service repositories on this branch:
 
 - **`identity` and `courier` have both a `config/deploy.yml` and a
-  `config/kamal-backup.yml`** — they adopted kit's templates on 2026-10-01. The
-  other five have neither. A `config/kamal-backup.yml` is what says what to back
-  up and where to put it, so the configuration exists for those two and has never
-  been run: nothing has been deployed, so nothing has been backed up.
+  `config/kamal-backup.yml`** — they adopted kit's templates on 2026-10-01. Those
+  are the only two with the backup configuration. A `config/kamal-backup.yml` is
+  what says what to back up and where to put it, so the configuration exists for
+  those two and has never been run: nothing has been deployed, so nothing has
+  been backed up.
 - **`billing` has a `config/deploy.yml`** and it is the stock Rails-generated
   file rather than kit's template — its whole `proxy:` and `accessories:` blocks
   are commented out, so it has no `backup` accessory in it either.
 - **No repository has `bin/drill`**, which is step 6 of the adoption below and
   the only thing that proves the first five worked.
 
-So a self-hosted install is **not** protected until somebody copies kit's two
-templates in, sets the four secrets, boots the accessory and drills it. Those
+So a self-hosted install is **not** protected until the backup configuration is
+in place, the four secrets are set, the accessory is booted and the drill has run.
+`identity` and `courier` have the first of those; the other five do not. Those
 steps are [kit's `templates/kamal/README.md`, "Adopting
 this"](https://github.com/cafaye/kit/blob/master/templates/kamal/README.md) —
 seven of them, and **step 6, the drill, is the one that proves the first five
