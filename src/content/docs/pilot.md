@@ -200,7 +200,10 @@ table:
   toolchain it needs and still cannot run a stack.
 - **`port 8080 free`.** If something else holds it, `caf dev -port` publishes
   the project service somewhere else — but the databases and caches do not move,
-  so fixing a collision on 5432 is a different problem.
+  so a collision on a **database** port is a different problem. On a `caf dev`
+  stack the database is not published on a host port at all (see
+  [step 5](#step-5--apply-the-migrations)), which is why the collision you hit
+  here is a *service* port.
 
 :::caution[Running it with no project at all]
 `caf doctor` in a directory with no `cafaye.yml` prints the tool table and then
@@ -561,17 +564,27 @@ whole surface, with its own OpenAPI document. `MFA_ENCRYPTION_KEY` is base64url,
 boot. Unset means the management routes are absent; a value of the wrong length
 is a startup failure.
 
-**To turn it on locally, use the repository's own Compose stack rather than
-`caf dev`**, because `caf dev` has no flag to add environment variables and
-rewrites its rendered file on every run:
+**To turn it on locally, use the repository's own stack rather than `caf dev`**,
+because `caf dev` has no flag to add environment variables and rewrites its
+rendered file on every run:
 
 ```sh
 cd identity
 export MFA_ENCRYPTION_KEY=$(openssl rand -base64 32 | tr -d '=\n' | tr '+/' '-_')
-docker compose up -d
+bin/dev
 ```
 
-:::caution[That command is a shape, not a verified recipe]
+**`bin/dev`, not `docker compose up -d` — this repository cannot start a
+database on its own.** `identity/docker-compose.yml` is an *override* with no
+`image:` on `postgres`, because kit's fetched stack ships that container, so
+`docker compose up -d` fails with *"service \"postgres\" has neither an image nor
+a build context specified"*. `identity` carries `bin/dev`, which fetches kit's
+stack at the ref in `kit.ref` and merges this file beside it. You will also need
+to add `MFA_ENCRYPTION_KEY` to `identity/docker-compose.yml`'s `environment:`
+block, because `bin/dev` composes from that file and does not inject host
+variables into it.
+
+:::caution[That key-generation line is a shape, not a verified recipe]
 The two `tr` calls turn 32 bytes of base64 into the 43-character unpadded
 base64url string the service reads — checked, it decodes back to exactly 32
 bytes, and `identity` refuses to start if it does not. The `tr -d '=\n'` matters:

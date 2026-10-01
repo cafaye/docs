@@ -116,7 +116,28 @@ Not `billing`'s problem. Check, in order:
    think it is. Staging and production endpoints are separate objects.
 3. **`STRIPE_WEBHOOK_SECRET` matches.** See case 2.
 4. **Firewall / security group.** `billing`'s port is 3000 in development and 80
-   in the image; the compose stack publishes neither by default.
+   in the image (`EXPOSE 80`); the compose stack publishes neither by default.
+
+:::caution[Scope: `billing` is not in launch scope, and this page is written against a stack nobody has deployed]
+Everything here describes code that exists and is tested. **It is not a
+description of a running deployment**, for two reasons worth keeping separate:
+
+- **`billing` is out of launch scope.** A page that reads like an operator's
+  reference for a service that is not shipping is how a confident-but-wrong
+  document gets written, so the status line is here rather than implied.
+- **No repository has adopted kit's Kamal configuration.** Only `billing` has a
+  `config/deploy.yml` at all, and it is the stock Rails-generated file with its
+  `accessories:` block commented out. There is therefore no accessory, no
+  published port and no TLS termination story to check against — which is why
+  step 1 above is written as "does the endpoint answer at all" rather than as a
+  recipe against a known topology. See [backup and
+  restore](/runbooks/backup-and-restore/) for the measured version of that gap.
+
+What that means for you, concretely: the SQL and the status-code table are
+verified against the code and will hold. The **network path** — ports, firewall,
+TLS — is the part you are inventing, and this page cannot tell you what it
+should be.
+:::
 
 ## Case 2 — Stripe is delivering and `billing` is refusing (400)
 

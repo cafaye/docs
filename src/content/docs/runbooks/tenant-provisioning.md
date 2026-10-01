@@ -8,8 +8,26 @@ who can sign in, and being able to prove both afterwards. This runbook does that
 against `identity`, which is the only service that owns tenancy.
 
 **Every response body and status code in this runbook is quoted from a real
-session** against `identity` at commit `27fe8a6`, with a real Postgres behind it.
-Where a step's output is worth checking by eye, the check is the step.
+session** against `identity`, with a real Postgres behind it. Where a step's
+output is worth checking by eye, the check is the step.
+
+:::caution[The quoted session is older than the code, and the routes have grown]
+A previous version of this page pinned the session to a commit
+(`27fe8a6`) **that no longer exists in `identity`'s history**, so the pin was
+worthless as evidence — a hash you cannot resolve cannot be checked. It is gone
+rather than replaced, because pinning a session to a commit is only honest if
+somebody re-runs it at that commit.
+
+What has changed since the transcript was taken is that `identity` has grown
+routes: there are now `/v1/accounts/{accountID}/api-keys`,
+`/v1/accounts/{accountID}/oidc-clients`,
+`/v1/accounts/{accountID}/admin/audit-log` and
+`/v1/accounts/{accountID}/admin/invitation-revocations`. **None of them is on
+this page, and this page is still the procedure for the ones it does cover** —
+the routes below were verified present against the tree as of `08e346d`. Re-run
+it before you rely on a quoted status code, and treat the bodies as the shape
+rather than as a byte-exact contract.
+:::
 
 ## What you need
 
@@ -195,12 +213,22 @@ HTTP 201
  "expires_at":"2026-10-07T10:51:50.606107+03:00","created_at":"…"}
 ```
 
-**The `token` is in the response body, and `courier` does not deliver it yet.**
-This is the step people expect to be automated and is not. `courier`'s Swoosh
-pipeline and its notification-preference store are built and it publishes
-`courier.email.delivered`, but **no provider adapter is configured**, so nothing
-leaves the process. Deliver the token yourself — out of band, to the address you
-just invited, and by a channel you trust.
+**The `token` is in the response body, and `identity` does not mail it.** This is
+the step people expect to be automated and is not. `courier`'s Swoosh pipeline,
+its notification-preference store and its adapter are all built — it ships
+`Swoosh.Adapters.SMTP` and publishes `courier.email.delivered` — but there is no
+code path from `identity` to `courier` for this invitation, and nothing in the
+platform delivers events off a bus. Deliver the token yourself — out of band, to
+the address you just invited, and by a channel you trust.
+
+**If you *have* configured `courier` with an SMTP adapter, that still does not
+send this.** Two independent reasons, both worth stating so nobody assumes
+configuring the adapter fixed the step: courier's adapter is chosen by
+`COURIER_MAIL_ADAPTER` and courier **refuses to start in production without
+one**, and configuring it does not create a caller. The invitation token is in
+the response body above; that response is the delivery mechanism. See [rotating
+secrets](/runbooks/secret-rotation/#8-the-courier-email-adapter-is-a-deployment-decision)
+for what the adapter does and does not switch on.
 
 `expires_at` is seven days out. An expired invitation is `410`, and a used one
 is `410`; both mean "ask for a new one", and re-posting to `/invitations` is the
@@ -378,7 +406,7 @@ DSN, which is the one convenience of database-per-service worth having.
 
 | Step | Why not | What to do |
 | --- | --- | --- |
-| The invitation email | `courier` has no provider adapter configured | Send the token yourself |
+| The invitation email | `identity` has no caller into `courier`; the token is in the response body | Send the token yourself, out of band |
 | A billing customer | `billing` is a separate deployment with its own database | Create plans and customers through `/v1` once you need them — [billing](/services/billing/) |
 | A `guard` role mapping | `guard` verifies tokens; role enforcement is `identity`'s | Nothing. `/v1/*` is bearer-only and `identity` is the authority |
 | Any event delivery | No publisher loop runs | Build the consumer yourself, or read the outbox |

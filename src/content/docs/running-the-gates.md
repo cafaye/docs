@@ -89,11 +89,17 @@ deploy step, not a test step** — and here they are a hard prerequisite, not a
 formality:
 
 ```sh
-docker compose up -d postgres
-export DATABASE_URL="postgres://identity:identity@localhost:5432/identity?sslmode=disable"
+bin/dev                              # fetch kit's stack at kit.ref, up --wait, migrate
+export DATABASE_URL="postgres://identity:identity@localhost:15500/identity?sslmode=disable"
 goose -dir migrations postgres "$DATABASE_URL" up        # <- without this, see below
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
+
+**`docker compose up -d postgres` does not work in `identity`.** Its
+`docker-compose.yml` is an override with no `image:` on `postgres`, because kit's
+stack ships that container; run alone it fails with *"service \"postgres\" has
+neither an image nor a build context specified"*. `identity` carries `bin/dev`,
+which fetches kit's stack and merges it.
 
 **Skipping `goose up` gives you `relation "public.oidc_clients" does not
 exist`**, not a skip and not a clean failure. The OIDC tables were never created
@@ -101,10 +107,11 @@ by a migration run, so the tests that need a real server find nothing to talk
 to. This is the single most confusing failure in the fleet, because the error
 names a relation rather than the missing step.
 
-The exact DSN matters: `docker-compose.yml` publishes Postgres on host `5432`,
-and a local Postgres install already listening there means a host-side DSN
-silently reaches the *other* server and fails with `role "identity" does not
-exist`. Point the DSN at the port compose actually got.
+The exact DSN matters, and **the port is not 5432**: kit's stack publishes its
+Postgres on `${KIT_POSTGRES_PORT:-15500}`, and `identity`'s own file publishes
+none. A local Postgres install already listening on 5432 means a host-side DSN
+pointed there silently reaches the *other* server and fails with
+`role "identity" does not exist`. Read the port `bin/dev` prints.
 
 **This is the one tier in the fleet that CI now refuses to let skip.** Every
 command above is what `identity`'s own `gate` job runs, and it asserts the
@@ -214,14 +221,22 @@ tests/self_test.sh` on its own runs the eleven.
 ### `courier` — needs a database, and it says so
 
 ```sh
-docker compose up -d db      # postgres:17 on localhost:5432 as postgres/postgres
+bin/dev                      # fetch kit's stack at kit.ref, up --wait
 mise run prime               # hex, deps, database, tests
 mix precommit                # warnings-as-errors, unused deps, format, test
 ```
 
 The gate is `mix local.hex --force && mix deps.get && mix ecto.setup && mix
-test`, and it needs a Postgres at `localhost:5432` as `postgres`/`postgres` that
-nothing else is holding. `mix precommit` is what runs before a commit lands.
+test`, and it needs a Postgres that nothing else is holding. `mix precommit` is
+what runs before a commit lands.
+
+**`bin/prime` does not start a database, and there is no `db` service to start.**
+`courier`'s compose file calls it `postgres`, it belongs to kit's stack rather
+than to `courier`, and it is published on `KIT_POSTGRES_PORT` (default `15500`)
+— so `docker compose up -d db` is a command that cannot resolve on two counts.
+`bin/dev` is how `courier` gets one; read the port it prints rather than
+assuming `5432`, because a DSN aimed at a native Postgres on 5432 fails as
+`role "courier" does not exist` and reads like a missing migration.
 
 ### `billing` and `cafaye-rb` — database in the gate, not outside it
 

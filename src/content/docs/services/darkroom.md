@@ -88,11 +88,26 @@ in a document.
 
 ## Running it
 
+:::caution[Port 5432 is a literal here, and it is the trap]
+`darkroom/docker-compose.yml` is one of the three that **can** be brought up on
+its own, and it publishes Postgres on host `5432` as a literal — the same port a
+native PostgreSQL install usually holds. When it collides, the container comes up
+**healthy** anyway: the healthcheck is `pg_isready`, which reports a server
+accepting connections and does not authenticate. Your command then reaches the
+*other* database and fails with `role "darkroom" does not exist`, which reads
+like a missing migration and is not one. Check what owns 5432 first.
+:::
+
 ```sh
 # the database, and the service
 docker compose up -d
 curl -s localhost:8080/healthz
 ```
+
+There is **no `POSTGRES_PORT` variable** here to move it — the published port is
+a literal, and a second compose file's `ports:` list is appended rather than
+substituted, so adding one is not the fix. Run one service at a time, or stop
+whatever holds 5432.
 
 The image is built from **`docker/Dockerfile`**, not `./Dockerfile`:
 

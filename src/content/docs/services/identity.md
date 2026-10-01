@@ -163,12 +163,30 @@ not exist` rather than skipping.
 
 ```sh
 bin/prime && go vet ./... && gofmt -l . && go test -race ./...
+```
 
-docker compose up -d postgres
-export DATABASE_URL="postgres://identity:identity@localhost:5432/identity?sslmode=disable"
+`bin/prime` itself needs no database — the integration tests skip unless
+`TEST_DATABASE_URL` is set. To run them you need a Postgres, and **this
+repository cannot start one on its own**: `identity/docker-compose.yml` is an
+**override** with no `image:` on `postgres`, because kit's stack ships that
+container. `docker compose up -d postgres` here fails with *"service \"postgres\"
+has neither an image nor a build context specified"*.
+
+`identity` carries **`bin/dev`**, which fetches kit's stack at the ref in
+`kit.ref` and brings up a database on `KIT_POSTGRES_PORT` (default `15500`):
+
+```sh
+bin/dev                              # fetch kit, compose up --wait, migrate, seed, print URLs
+export DATABASE_URL="postgres://identity:identity@localhost:15500/identity?sslmode=disable"
 goose -dir migrations postgres "$DATABASE_URL" up
 TEST_DATABASE_URL="$DATABASE_URL" go test ./...
 ```
+
+**The port is the part to get right.** Kit's Postgres is on `15500` by default,
+not 5432, so a DSN written for 5432 either fails or — the worse outcome —
+reaches a *different* Postgres that happens to be listening there, and fails with
+`role "identity" does not exist`, which reads like a missing migration. Read the
+port `bin/dev` prints rather than assuming one.
 
 `gofmt -l .` must print nothing. See [Running the
 gates](/running-the-gates/#identity--needs-a-database-and-migrations-applied).
