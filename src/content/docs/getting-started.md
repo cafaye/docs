@@ -11,18 +11,21 @@ output is quoted where it matters.
 
 ## Status, first
 
-**cafaye is in early development.** Of the ten `caf` subcommands, **five** do
-real work today — `version`, `doctor`, `dev`, `contract lint`, `contract
-resolve`. The other five (`init`, `new`, `deploy`, `gen`, `mcp`) parse their
-flags, check their argument count, and return `not implemented in v0`. That is
-stated on every step below rather than hidden, because a command that silently
-half-works is worse than one that refuses.
+**cafaye is in early development.** Of the twelve `caf` subcommands, **nine** do
+real work today — `backup`, `contract lint`/`contract resolve`, `deploy`, `dev`,
+`doctor`, `env`, `mcp`, `reclaim`, `version`. The remaining three (`gen`, `init`,
+`new`) parse their flags, check their argument count, and return `not
+implemented in v0`. That is stated on every step below rather than hidden,
+because a command that silently half-works is worse than one that refuses.
+`caf/internal/cli/stub_test.go` holds the table this sentence is derived from,
+and it is checked rather than remembered.
 
-What *is* real: the [contracts](/contracts/) are frozen and validated, seven of
-the eight `caf` subcommands you will reach for parse correctly, the services have
+What *is* real: the [contracts](/contracts/) are frozen and validated, the
+services have
 HTTP surfaces you can call, container images you can build, a local stack you can
-run, and `caf dev` will render and bring up a compose file from a manifest. What
-is not real: `caf deploy`, `caf gen`, and the broker. The
+run, `caf dev` will render and bring up a compose file from a manifest, and
+`caf deploy` will build, push and roll a service out with Kamal. What
+is not real: `caf gen`, and the broker. The
 [runbooks](/runbooks/) assume you have already got the services running on your
 own infrastructure.
 
@@ -605,16 +608,32 @@ has the loop that was run, and why it does not record a goose version.
 
 ## Step 6 — deploy to your own infrastructure
 
-<span class="badge caution">Coming soon</span> — `caf deploy` parses its flags
-and returns `not implemented in v0`.
+`caf deploy` works. It drives Kamal: it installs Docker on the host if the host
+lacks it, boots the accessories, builds and pushes the image, and rolls the
+release out behind `kamal-proxy` only once the new container answers its
+healthcheck. What it does not have is a cafaye-operated remote, so it deploys
+to infrastructure you already pay for.
 
 ```sh
-caf deploy identity --dry-run    # caf: caf deploy: not implemented in v0
+caf deploy --dry-run identity
 ```
 
-It takes `-env` (default `staging`), `-dry-run`, and `-yes`, and its usage line
-is `caf deploy [flags] <service>`. There is no hosted cafaye platform to deploy
-to yet, so there is also no remote to authenticate against.
+Run it from the project directory — the one holding `config/deploy.yml`. In a
+directory without one, the real answer is:
+
+```text
+caf: caf deploy: /tmp/cafdry has no config/deploy.yml, so there is nothing to deploy.
+  Copy it from cafaye/kit at the ref your kit.ref names: kit/templates/kamal/deploy.yml.erb -> config/deploy.yml
+```
+
+It takes `-env`, `-version`, `-dry-run` and `-yes`, and its usage line is
+`caf deploy [flags] <service>`. **Flags come before the service name**, so
+`caf deploy --dry-run identity` and not `caf deploy identity --dry-run`; the
+latter is a usage error. `-env` names an overlay merged over the base config
+(`config/deploy.<env>.yml` over `config/deploy.yml`) and defaults to empty
+rather than to a named stage. `-dry-run` prints every command it would run and
+changes nothing. Without `-yes` it asks first, and a machine with nobody to
+answer is told to pass it rather than left to guess.
 
 :::caution[`caf` does not deploy a cafaye service. `kamal` does, and `kit` ships the configuration — three files, copied per service]
 

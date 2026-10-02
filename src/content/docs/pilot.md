@@ -18,9 +18,11 @@ ones that matter are the ones you can re-run.
 ## Read this before anything else
 
 **There is no hosted cafaye.** Not "not yet" — there is no platform of ours for
-you to point at. `caf deploy` is a stub that parses its flags and returns `not
-implemented in v0`, and there is nothing behind it to authenticate against. What
-exists is **public GitHub repositories** and a CLI.
+you to point at, and nothing behind it to authenticate against. `caf deploy`
+itself is implemented: it deploys a service with Kamal, building the image,
+pushing it and rolling it out behind `kamal-proxy`, to infrastructure you
+already pay for. What is missing is the cafaye-operated remote. What exists is
+**public GitHub repositories** and a CLI.
 
 So "hosted pilot" means: *you run it, in your own infrastructure, on your own
 cloud account or your own metal, and we help you get it running and keep it
@@ -41,7 +43,7 @@ one you need rather than the whole platform.
 
 | Service | What it owns | Language | The gap you will hit |
 | --- | --- | --- | --- |
-| [`identity`](https://github.com/cafaye/identity) | Users, sessions, accounts, roles, invitations, OIDC provider, MFA | Go | No password reset, no email verification, no refresh tokens, no admin API |
+| [`identity`](https://github.com/cafaye/identity) | Users, sessions, accounts, roles, invitations, OIDC provider, MFA | Go | Password reset and email verification are built and published, but answer **503** until courier's mailer and a link template are configured. No refresh tokens, no admin API |
 | [`billing`](https://github.com/cafaye/billing) | Plans, customers, subscriptions, prepaid credit, Stripe in and out | Ruby | No customer portal, no refunds, no usage-events API |
 | [`courier`](https://github.com/cafaye/courier) | Transactional email, preferences, **every outbound webhook** | Elixir | **No email provider adapter configured** — nothing is delivered until you set one |
 | [`darkroom`](https://github.com/cafaye/darkroom) | Signed uploads, tenant-scoped assets, variants, S3 and R2 | Rust | No transcoding, no CDN, no malware scanning |
@@ -674,9 +676,9 @@ because it will get shorter and this page will be updated when it does.
 | **`guard` proxies nothing.** | It authenticates and forwards no request onward. Call services directly, or accept that `guard` is an auth decorator today. | `guard`'s route table; `/v1/me` |
 | **`guard` sessions are per process.** | A browser session dies with the replica it signed in on, and is lost on restart. **Run one replica.** | the `SessionStore` in `guard` |
 | **`muse` does not verify the token it is given.** | Do not put `muse` behind anything you care about. | `muse`'s auth stub |
-| **`caf deploy`, `caf gen`, `caf init`, `caf new`, `caf mcp` are stubs.** | Five of the ten commands `caf help` lists parse their flags and return `not implemented in v0`. You deploy by building each repository's Dockerfile. | `caf/internal/cli/*.go`; the table in [Getting started](/getting-started/) |
+| **`caf gen`, `caf init` and `caf new` are stubs.** | Three of the twelve commands `caf help` lists parse their flags and return `not implemented in v0`. The other nine work, **including `caf deploy`** (Kamal) and `caf mcp`, so write your manifest by hand rather than scaffolding one. | `caf/internal/cli/stub_test.go`, whose `stubCommands` table is the single source of truth |
 | **Telemetry is instrumented; no collector is deployed.** `courier`, `billing`, `identity` and `muse` each export traces, and nothing in a cafaye environment receives them. `kit` ships the stack and `bin/dev` runs it, so a pilot gets traces rather than a promise. | You will not have a fleet-wide trace view until you run the stack, and you should budget for wiring `<SERVICE>_OTEL_ENDPOINT` at whatever backend you already pay for. `muse` is not on core's `error.type` vocabulary, so do not group a cross-service error panel on that attribute. | [Observability](/observability/) |
-| **No password reset, no email verification.** | A user who forgets their password has no path back in. **Plan a support channel for this.** | `identity`'s README, "Not built yet" |
+| **Password reset is built but unconfigured by default.** | `POST /v1/password-resets` and `/confirm` are served and published, and `site` ships the flow — but the recovery surface is mounted only with a mailer behind it, so without `COURIER_BASE_URL`, `COURIER_TOKEN` and `PASSWORD_RESET_LINK_TEMPLATE` it answers **503**, not 404. Set those, and **still plan a support channel.** | `cmd/identity/main.go`, `buildRecovery`; `identity/openapi/v1.yaml` |
 | **`identity` OIDC has no refresh tokens.** | Access tokens live fifteen minutes and cannot be renewed. | the discovery document, where the absent features are absent rather than stubbed |
 | **No vault key rotation.** | `MUSE_VAULT_KEY` cannot be rotated in place. | `key_version` is always 1 |
 | **`parlor` is not a finished template,** and its manifest does not validate. | Do not clone it expecting a product shell. | the [drift audit](/architecture/topology/#cross-repo-drift-audit) |
@@ -746,8 +748,9 @@ What exists today, honestly:
   under `owner.contact`: `identity@cafaye.com`, `billing@cafaye.com`,
   `courier@cafaye.com`, `darkroom@cafaye.com`, `guard@cafaye.com`,
   `muse@cafaye.com`, `pantry@cafaye.com`, `caf@cafaye.com`, `core@cafaye.com`,
-  `cafaye@cafaye.com`, `docs@cafaye.com`. Two repositories declare none —
-  `kit` and `parlor` — so there is no address to write to for those two.
+  `cafaye@cafaye.com`, `docs@cafaye.com`, `parlor@cafaye.com`,
+  `site@cafaye.com`. One repository declares none: **`kit`, which has no
+  `cafaye.yml` at all**, so there is no address to write to for it.
 - **This site.** Every command on it was run, and every gap on it was measured.
 
 What does **not** exist yet, and we would rather say so than have you discover

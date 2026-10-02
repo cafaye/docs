@@ -64,6 +64,66 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ### Fixed
 
+- **`caf deploy` and `caf mcp` were documented as stubs. They are not, and this
+  was the most load-bearing falsehood in the documentation.** A prospect
+  reading *Pilot* and *Pricing* was told the headline verb parses its flags and
+  returns `not implemented in v0`, and that five of `caf`'s commands are
+  flags-only. `caf/internal/cli/stub_test.go` holds the table that is the
+  single source of truth, and it says three of twelve are stubs — `gen`, `init`,
+  `new` — while `deploy`, `mcp`, `backup`, `contract`, `dev`, `doctor`, `env`
+  and `reclaim` all work. Measured rather than inferred: `caf gen`, `caf init`
+  and `caf new` were each run and returned the sentinel; `caf deploy` printed a
+  real configuration error naming the file to copy from `kit`; `caf mcp` started
+  a server and logged a session connect and disconnect. Corrected in
+  `pilot.md`, `pricing.md`, `getting-started.md` and `upgrading.md`.
+
+  The error was in the **direction** that costs a deal. It described a working
+  product as absent, so a reader looking for a reason to say no had one handed
+  to them — and, worse, it taught the rest of the documentation to be written
+  from a stale snapshot rather than from what the code does.
+
+- **The example under "Step 6" could not have worked as written.** It read
+  `caf deploy identity --dry-run`, but `caf` requires flags to precede
+  positional arguments; run verbatim it fails with
+  `caf deploy wants 1 argument, got 2`. The correct order is
+  `caf deploy --dry-run identity`. The same paragraph said `-env` defaults to
+  `staging`, and `deploy.go` declares `fs.StringVar(&opts.environment, "env",
+  "", ...)` — the default is empty, naming no stage. It also omitted `-version`,
+  which the command does accept. All three corrected against the source, and the
+  error output shown is the real one, copied from a run.
+
+- **Password reset and email verification were documented as not built. They
+  are built, served, published, and shipped.** The claim appeared in seven
+  places across `pilot.md`, `pricing.md`, `security.md`, `services/index.md` and
+  `architecture/topology.md`, and in two of its forms it was specifically wrong:
+  `topology.md` said they were "absent from the discovery document rather than
+  stubbed", and all five recovery paths — `/v1/password-resets`,
+  `/v1/password-resets/confirm`, `/v1/email-verifications`,
+  `/v1/email-verifications/confirm`, `/v1/email-verification` — are in
+  `identity/openapi/v1.yaml` among its thirty `/v1` paths. `site` calls two of
+  them and implements the whole flow.
+
+  What is actually true is narrower and more useful: the surface is mounted
+  **only with a mailer behind it**. `cmd/identity/main.go` calls
+  `buildRecovery`, and when `COURIER_BASE_URL`, `COURIER_TOKEN` and a link
+  template are unset it returns `recovery.Unavailable{}` and
+  `POST /v1/password-resets` answers **503**. The comment there is explicit that
+  this is deliberate — a 404 would tell a client this service has never heard of
+  password recovery, "which is both false and useless". The docs now say that
+  instead, because "configure courier and a link template" is an action a reader
+  can take and "does not exist" is not.
+
+- **Two rows of the cross-repo drift table in `topology.md` were near-duplicates
+  of each other**, differing only in which items they listed, and both carried
+  the password-reset error. Collapsed into one accurate row plus one that states
+  the 503 configuration dependency.
+
+- **`pilot.md` said two repositories declare no `owner.contact`.** `kit` does
+  not — it has no `cafaye.yml` at all — but `parlor` declares
+  `parlor@cafaye.com`, and `site` declares `site@cafaye.com`. Verified by
+  reading every repository's `owner:` block rather than trusting the sentence;
+  the two new addresses are now in the list.
+
 - **The merge of `master` into this branch concatenated the two append-only
   logs instead of choosing between them, and found one clause in `docs-24`'s
   entry that measurement overrules.** `master` carried `docs-24` — a rewritten

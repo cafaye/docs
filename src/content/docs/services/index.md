@@ -14,7 +14,7 @@ truth, not hedging.
 
 | Service | Owns | Language | Status |
 | --- | --- | --- | --- |
-| [identity](/services/identity/) | Auth, sessions, accounts, tenancy, OIDC, MFA | Go | v0 — accounts, roles, invitations, the OIDC provider, and TOTP with recovery codes. **No password reset, no email verification, no refresh tokens.** |
+| [identity](/services/identity/) | Auth, sessions, accounts, tenancy, OIDC, MFA | Go | v0 — accounts, roles, invitations, the OIDC provider, TOTP with recovery codes, and password reset and email verification. **Recovery answers 503 until courier's mailer and a link template are configured. No refresh tokens.** |
 | [billing](/services/billing/) | Plans, subscriptions, credits, metering | Ruby | v0 — customers, plans, the subscription lifecycle, webhooks in and out |
 | [courier](/services/courier/) | Email, push, every outbound webhook | Elixir | v0 — email pipeline, preferences, Oban outbox worker, signed outbound webhooks. Publishes one event |
 | [darkroom](/services/darkroom/) | Media uploads, variants, object storage | Rust | v0 — signed uploads, tenant isolation, variants, S3 **and Cloudflare R2** |
