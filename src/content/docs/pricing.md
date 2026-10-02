@@ -75,7 +75,7 @@ estimate.
 
 | Unit | What it would be | Today |
 | --- | --- | --- |
-| Platform | a cafaye-operated control plane, and `caf deploy` that has somewhere to deploy to | **Does not exist.** `caf deploy` parses its flags and returns `not implemented in v0`, and there is no remote to authenticate against. |
+| Platform | a cafaye-operated control plane, and `caf deploy` that has somewhere to deploy to | **Does not exist** — and the reason is the first half, not the second. `caf deploy` is implemented: it deploys a service with Kamal, building the image, pushing it and rolling it out behind `kamal-proxy`. What does not exist is a cafaye-operated remote for it to authenticate against, so today it deploys to infrastructure you already pay for. |
 | identity | your deployment, our pager | **Does not exist.** Today "hosted" means you run it in your own account and we help you get it running — which is consulting, not a product. |
 | courier | your deployment, our pager, and a configured email provider | **Does not exist.** Separately, no email provider adapter is configured in any cafaye checkout, so nothing is delivered until you set one. |
 
@@ -182,11 +182,19 @@ Stated here rather than left for you to infer from the tables:
   point at.
 - **No release tags on any service.** `go install @latest` gives you `master`,
   and `core` is the only repository with a version tag.
-- **The headline CLI verb is a stub.** `caf deploy` parses its flags and returns
-  `not implemented in v0`; so do `caf init`, `caf new` and `caf gen`.
-- **`identity` has no password reset and no email verification.** A user who
-  forgets their password has no path back in, which means a support channel is
-  part of the product, not an accessory to it.
+- **Three of `caf`'s twelve commands are stubs: `caf gen`, `caf init` and
+  `caf new`.** They parse their flags and return `not implemented in v0`. The
+  other nine — `backup`, `contract`, `deploy`, `dev`, `doctor`, `env`, `mcp`,
+  `reclaim`, `version` — work, **including `caf deploy`**, which builds, pushes
+  and rolls out with Kamal. It deploys to infrastructure you already pay for;
+  what it does not have is a cafaye-operated remote.
+- **`identity`'s password reset and email verification are built but unconfigured
+  by default.** Both are served, published in `identity`'s OpenAPI document, and
+  implemented end to end by `site` — but the recovery surface is mounted only
+  with a mailer behind it. Until `COURIER_BASE_URL`, `COURIER_TOKEN` and
+  `PASSWORD_RESET_LINK_TEMPLATE` are set, `POST /v1/password-resets` answers
+  **503**, not 404. **Budget for that configuration, and for a support channel
+  behind it.**
 - **`courier` has no email provider adapter configured,** so nothing is
   delivered out of the box.
 - **Nothing publishes events off the outbox.** An event is a row, not a

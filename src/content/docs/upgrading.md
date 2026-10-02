@@ -263,10 +263,11 @@ set is wrong the moment you run two replicas.
 **Ordering is per-`subject`, never global.** Correlate on `subject` and compare
 `time`.
 
-**`caf deploy`, `caf gen`, `caf init`, `caf new` and `caf mcp` are still flags-only**
-— they parse, check their argument count, and return `not implemented in v0`.
-`caf dev` now does real work; see [Getting
-started](/getting-started/#step-5--run-a-service-locally).
+**`caf gen`, `caf init` and `caf new` are still flags-only** — they parse, check
+their argument count, and return `not implemented in v0`. `caf dev` now does real
+work; see [Getting
+started](/getting-started/#step-5--run-a-service-locally). `caf deploy` and
+`caf mcp` also do real work and are covered under Step 6.
 
 ## Verify, then close
 

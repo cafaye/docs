@@ -240,10 +240,15 @@ secrets](/runbooks/secret-rotation/).
 
 **Not built, and a reader will hit it.**
 
-- **No password reset and no email verification in `identity`.** A user who
-  forgets a password has no path back in. In a deployment that means somebody has
-  to be on the other end of a support channel, so a support arrangement is part of
-  the product rather than an accessory to it.
+- **Password reset and email verification exist in `identity` but are off until
+  they are configured.** The five recovery paths are served and published in
+  `identity/openapi/v1.yaml`, and `site` implements the flow. What is missing by
+  default is the mailer: without `COURIER_BASE_URL`, `COURIER_TOKEN` and
+  `PASSWORD_RESET_LINK_TEMPLATE`, `POST /v1/password-resets` answers **503**.
+  The service is mounted deliberately rather than absent — a 404 would tell a
+  client that password recovery does not exist here, which is false — so the
+  honest reading of a 503 is "not configured yet", and it is still true that a
+  deployment should have somebody on the other end of a support channel.
 - **No refresh tokens.** Access tokens live fifteen minutes and cannot be
   renewed, and there is no end-session endpoint.
 - **OIDC and MFA are not mounted by default.** `identity` requires all three of
