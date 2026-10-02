@@ -48,10 +48,49 @@ next reader does not go looking for 133 s on this repository.
 
 ## AFTER — one `caf` invocation for the whole tree
 
-    cd docs && CAF=/tmp/caf node --test tests/contracts.mjs
+    cd docs && CORE_PATH=../core CAF=/tmp/caf node --test tests/contracts.mjs
 
-_(filled in with the measured number by the commit that changes the call
-shape; it is not a projection.)_
+Seven consecutive runs, wall clock:
+
+| run | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| seconds | 0.15 | 0.14 | 0.18 | 0.14 | 0.15 | 0.15 | 0.15 |
+
+**1 `caf` invocation** (`tests/contracts.mjs:217`, `execFileSync(caf, ['contract',
+'lint', dir])`) for all three manifests.
+
+| | BEFORE | AFTER |
+| --- | --- | --- |
+| `caf` processes | 3 | 1 |
+| tier wall clock (median of 5 / 7 runs) | 0.18 s | 0.15 s |
+| `bin/prime --contracts` | green | green |
+| offline tier | 16 tests, 0 skipped | 16 tests, 0 skipped |
+| contract tier | 7 tests, 0 skipped | 7 tests, 0 skipped |
+| all 8 `gate.yml` proofs | satisfied | satisfied |
+
+The 30 ms is real but small, and it should be: this site has two fences. The
+number worth having is the **marginal** cost, because it is what made the
+research's figure large and what this change removes.
+
+### The marginal cost, measured rather than extrapolated
+
+Forty copies of a documented example, plus this repository's own manifest —
+41 files, the shape a site with forty manifests would produce:
+
+    # OLD shape: one process per manifest
+    for f in <tree>/*/cafaye.yml; do /tmp/caf contract lint "$f"; done
+    #   → 0.41 s
+
+    # NEW shape: one process for the whole tree
+    /tmp/caf contract lint <tree>
+    #   → 0.01 s
+
+**41×, at 41 files.** The old shape's cost is linear in the number of manifests
+and the new shape's is flat, so the ratio grows with the tree: the two numbers
+above are the same measurement the research's 133–223 s was, taken at a size
+this repository can actually hold. At the measured ~12.9 ms per spawn, 133 s is
+about **10 300 manifests** and 223 s about **17 200**. Neither is reachable
+from this site, which has two.
 
 ## The binary is part of the measurement
 
@@ -66,3 +105,8 @@ and the difference is not a flake: it is the whole reason the numbers above are
 taken against a freshly built `caf`. `CAF` is the seam, `bin/prime --contracts`
 and CI both set it, and a measurement taken against an arbitrary `caf` on
 `PATH` measures the wrong tool.
+
+This mattered to the packet, not just to the measurement: that staleness is why
+the tier was **red on master in CI** before the call shape changed, and the fix
+is described in the commit that changed it, under "ONE PROCESS, ONE PARSE" in
+`tests/contracts.mjs`.

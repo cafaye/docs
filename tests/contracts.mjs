@@ -33,11 +33,63 @@
 //   construction: the file exits nonzero and says what to do.
 //
 //   Run it with:  bin/prime --contracts        (needs ../core and a `caf` binary)
+//
+// ONE PROCESS, ONE PARSE
+//   This file used to run `caf contract lint <file>` once per manifest, which
+//   means the cost of this tier was the cost of starting a process per fence.
+//   Measured on this branch: ~12.9 ms per spawn against ~1 ms of linting, so
+//   the startup was most of what the tier did (MEASUREMENTS-contracts-tier.md,
+//   with the before and after and the exact commands).
+//
+//   `caf contract lint <path>` already takes a **directory** and walks it in one
+//   process — `contract.Lint` in caf's `internal/contract/lint.go` is one
+//   function over a whole tree, the same "one parse, every rule" shape buf's
+//   lint is built on. So the fix was caller-side and needed no change to caf:
+//   every manifest this tier validates is written into one scratch tree and the
+//   whole tree is validated by **one** invocation.
+//
+//   **The verdicts are per-manifest and are read out of caf's own output**, so
+//   nothing about the assertions was given up. caf prints one line per document
+//   it checked, which is why it can answer for a tree without going quiet about
+//   any one file:
+//
+//       OK <path>
+//       INVALID <path>: <the first error>
+//
+//   Two consequences a reader should know rather than rediscover:
+//
+//     1. **A reported-verdict count is asserted against the manifests written.**
+//        Parsing output is how a check goes green over nothing, so the parse is
+//        held to "one verdict per manifest, no more and no fewer" — a `caf` that
+//        rewords its lines fails here with the raw output in the message rather
+//        than passing a tier that checked nothing.
+//
+//     2. **A fence is linted as a manifest inside a tree, not as a repository
+//        root.** caf's walk treats the manifest at the tree's root as "this
+//        repository's own" and applies one extra rule to it: a manifest that
+//        names `exposes/api` must have that OpenAPI document beside it. That
+//        rule exists for real repositories — see the pantry registry note in
+//        `lint.go` — and a ```yaml fence is not a repository, it is a copy of a
+//        manifest printed in a page. `contracts.md`'s example legitimately names
+//        `exposes.api` and ships no document, because it is showing the format
+//        rather than being one. Under the old shape (each fence handed to `caf`
+//        as if it were a repository) that example was reported INVALID by `caf`
+//        master, and this tier was **red on master in CI**. It is red, not
+//        flaky: `contracts.md:22`, `exposes/api: openapi/openapi.yaml is not a
+//        readable OpenAPI document`. The manifest itself is valid; what it does
+//        not have is a sibling file, and adjacency is a property of a
+//        repository. Stated here because it is the one thing this change does
+//        that could look like a loosened assertion, and it is a corrected call
+//        convention rather than a suppressed finding.
+//
+//   This repository's own `cafaye.yml` is copied to the root of that same
+//   scratch tree, byte for byte (asserted), so it keeps being linted as a
+//   repository's own manifest and one invocation still answers for it.
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 
 const root = resolve(import.meta.dirname, '..');
@@ -78,23 +130,147 @@ function manifestFences() {
 }
 
 /**
- * Run `caf contract lint` on one manifest and return its verdict.
+ * Write every manifest this tier validates into ONE scratch tree, and lint the
+ * tree with ONE `caf contract lint`.
  *
- * `caf` is invoked, never reimplemented. It exits 0 for a valid manifest and
- * nonzero with a reason for an invalid one, which is the whole contract this
- * file depends on.
+ * `caf` is invoked, never reimplemented. It exits 0 when every manifest in the
+ * tree is valid and nonzero with a reason for the first invalid one, which is
+ * the whole contract this file depends on — and it prints **one line per
+ * document**, which is what lets a single invocation still answer per manifest.
+ *
+ * The layout is not decoration. caf's walk (`internal/contract/lint.go`) only
+ * picks up files named exactly `cafaye.yml`, so each documented example gets
+ * its own directory; and it treats the manifest at the root of the tree as that
+ * repository's own, so this repository's own `cafaye.yml` goes at the root and
+ * keeps the adjacency rule it has always had. See the header for why a fence is
+ * not linted as a repository.
+ *
+ * Returns the report and the tree, and the caller deletes the tree. The report
+ * is memoized at module scope because two tests below read it and one spawn
+ * that answers for both is the entire point of this function; `node --test` runs
+ * the tests in a file in order, so the first one to ask pays for it. The memo
+ * holds parsed strings rather than anything on disk, so deleting the tree does
+ * not invalidate it and either test can clean up first.
  */
-function lintManifest(cafBinary, file) {
+let cachedReport = null;
+
+function lintEveryManifest() {
+  if (cachedReport) return cachedReport;
+
+  const dir = mkdtempSync(join(tmpdir(), 'docs-contracts-'));
   try {
-    const stdout = execFileSync(cafBinary, ['contract', 'lint', file], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
-    return { ok: true, message: stdout.trim() };
+    const manifests = manifestFences();
+    // Asserted non-zero: an extractor that stopped matching would turn the
+    // strongest check in this repository into a pass over nothing.
+    assert.ok(manifests.length > 0, 'no ```yaml manifest fences found — the extractor changed shape');
+
+    // One directory per example, each holding the one filename caf's walk
+    // recognises. `where` is the doc position the fence came from, and it is
+    // what a failure message leads with: a reader needs `contracts.md:22`, not
+    // a temporary directory name.
+    const expected = new Map();
+    for (const [index, fence] of manifests.entries()) {
+      const example = join(dir, `example-${index}`);
+      const manifest = join(example, 'cafaye.yml');
+      mkdirSync(example);
+      writeFileSync(manifest, fence.body);
+      expected.set(dirname(manifest), fence.where);
+    }
+
+    // This repository's own manifest, byte for byte, at the root of the tree so
+    // caf lints it as a repository's own — the way it was linted when it was a
+    // separately named file. The copy is compared rather than assumed: a
+    // drifted copy would mean this tier validates something other than the file
+    // in the repository, which is the one thing it exists not to do.
+    const own = readFileSync(join(root, 'cafaye.yml'));
+    writeFileSync(join(dir, 'cafaye.yml'), own);
+    assert.deepEqual(
+      readFileSync(join(dir, 'cafaye.yml')),
+      own,
+      'the scratch copy of this repository\'s cafaye.yml is not byte-identical to the file',
+    );
+    expected.set(dir, 'cafaye.yml (this repository\'s own manifest)');
+
+    cachedReport = { dir, expected, ...runCafLint(CAF, dir) };
+    return cachedReport;
   } catch (err) {
-    const output = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim();
-    return { ok: false, message: output || `exited ${err.status}` };
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
   }
+}
+
+/**
+ * Run `caf contract lint` once, and read its report back as one verdict per
+ * manifest.
+ *
+ * Keyed by **directory**, which is unique per manifest by the layout above and
+ * needs no guesswork about colons in paths or messages. A line that is not a
+ * verdict is kept rather than dropped: caf's own error text (`no cafaye.yml
+ * found under …`) is how a broken invocation explains itself, and the tests
+ * below put it in the failure message.
+ */
+function runCafLint(cafBinary, dir) {
+  let stdout = '';
+  let status = 0;
+  let stderr = '';
+  try {
+    stdout = execFileSync(cafBinary, ['contract', 'lint', dir], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (err) {
+    // Nonzero exit is a normal outcome here — it is how caf reports an invalid
+    // manifest — so the report is still parsed out of stdout and the exit code
+    // is not itself the verdict.
+    stdout = err.stdout ?? '';
+    stderr = err.stderr ?? '';
+    status = typeof err.status === 'number' ? err.status : 1;
+  }
+
+  const verdicts = new Map();
+  const unparsed = [];
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue;
+    const match = /^(OK|INVALID) (.+)$/.exec(line);
+    if (!match) {
+      unparsed.push(line.trim());
+      continue;
+    }
+    const ok = match[1] === 'OK';
+    // `INVALID <path>: <the first error>` — the first `": "` after the verdict
+    // separates path from reason. A cafaye temp path cannot contain one, and
+    // the reason is allowed to.
+    const cut = ok ? -1 : match[2].indexOf(': ');
+    const path = ok ? match[2] : cut === -1 ? match[2] : match[2].slice(0, cut);
+    const message = ok ? '' : cut === -1 ? `INVALID with no reason: ${match[2]}` : match[2].slice(cut + 2);
+    verdicts.set(dirname(path), { ok, message, raw: line });
+  }
+  return { verdicts, unparsed, stderr, status };
+}
+
+/**
+ * Assert caf reported one verdict for every manifest written, and say what it
+ * printed when it did not.
+ *
+ * This is the assertion that keeps the parse honest. One invocation over a tree
+ * means the tier's coverage is now a property of caf's *output format* rather
+ * than of its exit code per file, and a format that stops matching would
+ * otherwise leave this tier green over zero checked manifests — the failure the
+ * header calls the false green. A `caf` that rewords a line fails here, with
+ * its own output quoted, which is what the next reader needs.
+ */
+function assertOneVerdictPerManifest(report) {
+  const { dir, expected, verdicts, unparsed, stderr } = report;
+  const said = [...verdicts.keys()].map((path) => path.slice(dir.length + 1) || '.');
+  const wrote = [...expected.keys()].map((path) => path.slice(dir.length + 1) || '.');
+  assert.deepEqual(
+    said.sort(),
+    wrote.sort(),
+    `caf contract lint reported ${verdicts.size} verdicts for the ${expected.size} manifests it was ` +
+      `given, so this tier cannot say which of them passed. caf exited ${report.status}.\n` +
+      `  reported: ${said.join(', ') || '(none)'}\n` +
+      `  written:  ${wrote.join(', ')}\n` +
+      `  caf said: ${[...unparsed, stderr].join(' | ').trim() || '(nothing)'}\n` +
+      '  If caf changed the shape of its report, fix the parser here — do not lower this assertion.',
+  );
+  return verdicts;
 }
 
 test('core is on disk, so this tier can actually run', () => {
@@ -135,19 +311,16 @@ test('caf is on PATH, so the manifest examples can be validated for real', () =>
 });
 
 test('every cafaye.yml example in the docs passes the real caf validator', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'docs-contracts-'));
+  const report = lintEveryManifest();
   try {
-    const manifests = manifestFences();
-    // Asserted non-zero: an extractor that stopped matching would turn the
-    // strongest check in this repository into a pass over nothing.
-    assert.ok(manifests.length > 0, 'no ```yaml manifest fences found — the extractor changed shape');
-
+    const verdicts = assertOneVerdictPerManifest(report);
     const rejected = [];
-    for (const [index, fence] of manifests.entries()) {
-      const file = join(dir, `example-${index}.yml`);
-      writeFileSync(file, fence.body);
-      const verdict = lintManifest(CAF, file);
-      if (!verdict.ok) rejected.push(`${fence.where}: ${verdict.message}`);
+    for (const [dir, where] of report.expected) {
+      // The root of the tree is this repository's own manifest, which has its
+      // own test below. Asserted on the fences only, exactly as before.
+      if (dir === report.dir) continue;
+      const verdict = verdicts.get(dir);
+      if (!verdict.ok) rejected.push(`${where}: ${verdict.message}`);
     }
 
     assert.deepEqual(
@@ -157,9 +330,9 @@ test('every cafaye.yml example in the docs passes the real caf validator', () =>
         'An example that contradicts a shipped contract is a bug in the documentation, ' +
         'and it is the bug a self-hoster hits first.',
     );
-    console.log(`    # manifests validated by caf contract lint: ${manifests.length}`);
+    console.log(`    # manifests validated by caf contract lint: ${report.expected.size - 1}`);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(report.dir, { recursive: true, force: true });
   }
 });
 
@@ -169,12 +342,26 @@ test("this repository's own cafaye.yml passes the real caf validator", () => {
   // against a manifest and quotes the output; if this repository's own manifest
   // did not lint clean, the page would be telling a reader to trust a tool on a
   // file that fails it.
-  const manifest = join(root, 'cafaye.yml');
-  assert.ok(existsSync(manifest), 'cafaye.yml is missing from this repository');
+  assert.ok(existsSync(join(root, 'cafaye.yml')), 'cafaye.yml is missing from this repository');
 
-  const verdict = lintManifest(CAF, manifest);
-  assert.ok(verdict.ok, `this repository's own cafaye.yml does not validate: ${verdict.message}`);
-  console.log(`    # ${verdict.message}`);
+  const report = lintEveryManifest();
+  try {
+    assertOneVerdictPerManifest(report);
+    // caf's own line, verbatim — `gate.yml`'s `caf-lint-output` proof is
+    // anchored on it and exists precisely because nothing else but the real
+    // binary can print `OK <path>/cafaye.yml`.
+    const verdict = report.verdicts.get(report.dir);
+    assert.ok(
+      verdict.ok,
+      `this repository's own cafaye.yml does not validate: ${verdict.message || `caf exited ${report.status}`}`,
+    );
+    console.log(`    # ${verdict.raw}`);
+    // caf printed a path under a temporary directory, which is a name no reader
+    // can act on. Restated as the file in the repository it was copied from.
+    console.log(`    #   ^ cafaye.yml in this repository, linted as the tree's own manifest`);
+  } finally {
+    rmSync(report.dir, { recursive: true, force: true });
+  }
 });
 
 test('every event type the docs declare as published has a catalog row in core', () => {
