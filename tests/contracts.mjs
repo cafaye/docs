@@ -95,6 +95,12 @@ import { test } from 'node:test';
 const root = resolve(import.meta.dirname, '..');
 const docs = join(root, 'src', 'content', 'docs');
 
+/**
+ * The one `caf` invocation's report, kept so the two tests that need verdicts
+ * share a single process. See `lintEveryManifest`.
+ */
+let cachedReport = null;
+
 /** Where to find core. An env seam, and the only one. */
 const CORE_PATH = process.env.CORE_PATH ?? resolve(root, '..', 'core');
 
@@ -152,8 +158,6 @@ function manifestFences() {
  * holds parsed strings rather than anything on disk, so deleting the tree does
  * not invalidate it and either test can clean up first.
  */
-let cachedReport = null;
-
 function lintEveryManifest() {
   if (cachedReport) return cachedReport;
 
