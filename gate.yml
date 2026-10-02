@@ -135,10 +135,13 @@ gate:
   # and the `contracts` job in `.github/workflows/ci.yml` are
   # `timeout-minutes: 20`. Measured here on a warm npm cache, one full
   # two-tier run is about 75 seconds (npm ci 25s, the Astro build 21s, the
-  # offline suite 5s, the contract tier 0.6s), so a floor tight enough to be a
-  # bug detector would be tight enough to be a flake generator on a cold
-  # runner, and a timeout that fires on a slow CI runner reads as a red gate
-  # over nothing.
+  # offline suite 5s, the contract tier 0.4s — re-measured as
+  # `CORE_PATH=../core CAF=<caf> npm run test:contracts`, three runs at
+  # 0.31/0.37/0.38s, of which node reports 0.13s of actual test time; the
+  # 0.6s this line used to claim was the pre-change figure), so a floor tight
+  # enough to be a bug detector would be tight enough to be a flake generator
+  # on a cold runner, and a timeout that fires on a slow CI runner reads as a
+  # red gate over nothing.
   timeoutSeconds: 1200
   proof:
     #

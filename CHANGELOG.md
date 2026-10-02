@@ -8,6 +8,37 @@ unversioned at present — it is pre-launch and `package.json` carries `0.0.0`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The contract tier validated three manifests with three `caf` processes, and
+  was red in CI against the `caf` CI builds.** `tests/contracts.mjs` ran
+  `caf contract lint <file>` once per manifest, so the tier's cost was the cost
+  of starting a process per fence: measured at ~12.9 ms per spawn against ~1 ms
+  of linting. `caf contract lint` already takes a directory and walks it in one
+  process, printing one line per document, so every manifest is now written
+  into a single scratch tree and **one** invocation validates all of them —
+  3 processes → 1, and the verdicts are still per manifest, read out of `caf`'s
+  own `OK <path>` / `INVALID <path>: <the first error>` lines.
+
+  **The red is the part worth knowing about.** Handed each fence as if it were a
+  repository root, the tier asked `caf` to apply the rule that a repository's own
+  manifest must have the OpenAPI document it names. `contracts.md`'s example
+  legitimately names `exposes.api: openapi/openapi.yaml` and ships no document,
+  because it is showing the manifest format rather than being one — so the tier
+  reported a page's example as invalid and CI was red. A `yaml` fence is a copy
+  of a manifest in a page, not a repository, and `caf`'s own walk already draws
+  that distinction. Linted as a manifest in a tree, the example is valid; it
+  always was.
+
+  **What did not change:** no assertion was weakened, nothing was skipped, no
+  dependency was added, `caf` and `core` were not touched, and a failure still
+  names the page and line (`src/content/docs/pilot.md:279: …`) plus `caf`'s own
+  reason. A new assertion holds the new parser to **one verdict per manifest
+  written** and quotes what `caf` printed, so a `caf` that reworded its output
+  fails loudly instead of leaving this tier green over nothing.
+
+  Numbers, commands, and the machine are in `MEASUREMENTS-contracts-tier.md`.
+
 ### Added
 
 - **One cluster, many databases** (`architecture/one-cluster`), the page an
